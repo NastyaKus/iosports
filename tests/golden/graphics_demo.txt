@@ -1,0 +1,6 @@
+launched
+page 1
+image tapped at 60,60
+switch on
+showing alert (slider 1.0)
+alert action OK

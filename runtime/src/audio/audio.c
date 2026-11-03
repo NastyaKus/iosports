@@ -434,7 +434,7 @@ int32_t iosrt_AudioSessionInitialize(void *rl, void *mode, void *proc, void *ud)
 int32_t iosrt_AudioSessionSetActive(long a) { (void)a; return 0; }
 int32_t iosrt_AudioSessionSetProperty(uint32_t id, uint32_t sz, const void *d) { (void)id; (void)sz; (void)d; return 0; }
 int32_t iosrt_AudioSessionGetProperty(uint32_t id, uint32_t *sz, void *d) {
-    if (id == FOURCC('c', 'h', 's', 'r') && *sz >= 8) { double r = 48000; memcpy(d, &r, 8); return 0; }
+    if (id == FOURCC('c', 'h', 's', 'r') && *sz >= 8) { double r = 44100; memcpy(d, &r, 8); return 0; }
     if (d && sz) memset(d, 0, *sz);
     return 0;
 }
@@ -450,8 +450,8 @@ static rt_bool as_setActive(id self, SEL s, long a, id *err) { (void)self; (void
 static rt_bool as_setDouble(id self, SEL s, double v, id *err) { (void)self; (void)s; (void)v; if (err) *err = NULL; return 1; }
 static id as_emptyArr(id self, SEL s) { (void)self; (void)s; return objc_autorelease(rt_array_new(NULL, 0)); }
 static long as_zero_l(id self, SEL s) { (void)self; (void)s; return 0; }
-static double as_rate(id self, SEL s) { (void)self; (void)s; return 48000; }
-static double as_iobuf(id self, SEL s) { (void)self; (void)s; return 256.0 / 48000; }
+static double as_rate(id self, SEL s) { (void)self; (void)s; return 44100;   /* AAudio resamples to the device rate, so apps need no converter */ }
+static double as_iobuf(id self, SEL s) { (void)self; (void)s; return 256.0 / 44100; }
 static double as_latency(id self, SEL s) { (void)self; (void)s; return 0.01; }
 static rt_bool as_inputAvailable(id self, SEL s) { (void)self; (void)s; return 1; }
 static long as_channels(id self, SEL s) { (void)self; (void)s; return 2; }

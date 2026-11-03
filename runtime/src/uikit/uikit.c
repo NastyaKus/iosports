@@ -868,8 +868,7 @@ static void v_addGesture(id self, SEL s, id g) {
 }
 static void v_removeGesture(id self, SEL s, id g) { (void)s; struct uiview *v = V(self); if (!v->gestures || !g) return; G(g)->view = NULL; RT_SEND1(void, v->gestures, "removeObjectIdenticalTo:", id, g); }
 
-/* --- dispatcher */
-static id seq_view;            /* hit view of the current touch sequence */
+/* --- dispatcher (seq_view: hit view of the current touch sequence) */
 static long seq_view_cancelled;
 static id seq_touch, seq_event;
 static void send_actions(id g) {
@@ -887,7 +886,15 @@ static int simultaneous(id a, id b) {
     if (db && rt_responds(db, q) && (RT_SEND2(long, db, "gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:", id, b, id, a) & 0xff)) return 1;
     return 0;
 }
+static id seq_view;
 static int should_begin(id g) {
+    /* a scroll view's own pan only takes over content touches it may cancel
+       (UIScrollView -touchesShouldCancelInContentView:, NO for controls) */
+    id sv = G(g)->view;
+    if (sv && rt_is_kind_of(sv, RT_CLASS(UIScrollView)) && ((struct uiscroll *)sv)->pan == g && seq_view && seq_view != sv) {
+        if (!((struct uiscroll *)sv)->cancelsContent) return 0;
+        if (!(RT_SEND1(long, sv, "touchesShouldCancelInContentView:", id, seq_view) & 0xff)) return 0;
+    }
     id d = G(g)->delegate;
     if (d && rt_responds(d, rt_sel("gestureRecognizerShouldBegin:")) && !(RT_SEND1(long, d, "gestureRecognizerShouldBegin:", id, g) & 0xff)) return 0;
     id v = G(g)->view;

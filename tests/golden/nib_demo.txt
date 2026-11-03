@@ -1,0 +1,4 @@
+BadgeView awakeFromNib, tag 7, frame {{130, 240}, {60, 60}}
+viewDidLoad: title outlet 'Loaded from a NIB', badge outlet is a BadgeView, 3 subviews
+tapped: from UIButton (1)
+tapped: from UIButton (2)
