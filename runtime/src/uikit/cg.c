@@ -840,6 +840,7 @@ void iosrt_CGContextSetTextDrawingMode(struct cgctx *c, int m) { (void)c; (void)
 void iosrt_CGContextSetTextMatrix(struct cgctx *c, gfx_mat m) { if (c) c->gs.text_mat = m; }
 gfx_mat iosrt_CGContextGetTextMatrix(struct cgctx *c) { return c ? c->gs.text_mat : gfx_mat_identity(); }
 void iosrt_CGContextSetTextPosition(struct cgctx *c, double x, double y) { if (c) { c->gs.text_mat.tx = x; c->gs.text_mat.ty = y; } }
+CGPoint iosrt_CGContextGetTextPosition(struct cgctx *c) { return c ? (CGPoint){ c->gs.text_mat.tx, c->gs.text_mat.ty } : (CGPoint){ 0, 0 }; }
 void iosrt_CGContextSetCharacterSpacing(struct cgctx *c, double s) { (void)c; (void)s; }
 void iosrt_CGContextSetFontSize(struct cgctx *c, double s) { (void)c; (void)s; }
 void iosrt_CGContextSetFont(struct cgctx *c, id f) { (void)c; (void)f; }

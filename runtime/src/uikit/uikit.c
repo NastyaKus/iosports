@@ -1328,6 +1328,7 @@ void rt_uikit_init(void) {
     IM(c, "isEqual:", c_isEqual); IM(c, "hash", c_hash); IM(c, "copyWithZone:", c_copy); IM(c, "copy", c_copy);
     rt_uiimage_init();
     rt_text_init();
+    { void rt_coretext_init(void); rt_coretext_init(); }
     rt_layers_init();
 
     NEWCLASS(UIResponder, o, 0);

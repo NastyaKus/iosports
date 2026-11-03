@@ -56,6 +56,7 @@ cat > "$S/Storyboard.app/Info.plist" <<PL
 <key>CFBundleIdentifier</key><string>org.iosrt.storyboard</string><key>UIMainStoryboardFile</key><string>Main</string>
 <key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
+app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -126,6 +127,11 @@ for flavor in linux-aarch64 android-arm64; do
   IOSRT_HEADLESS_FRAMES=10 IOSRT_SCRIPT="4:tap:120,222" $R "$S/Storyboard.app" >"$T/out.txt" 2>&1; rc=$?
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/storyboard_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "storyboard_demo (main storyboard, scenes, embed/show segues, prepareForSegue)"; else ko "storyboard_demo rc=$rc" "$T/diff.txt"; fi
+  # 3i. CoreText: lines, runs, glyphs, truncation, framesetter (drawn runs are in the frame trace)
+  IOSRT_HEADLESS_FRAMES=3 $R "$S/coretext_demo" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  grep '^ctrun ' "$T/out.txt" >>"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/coretext_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "coretext_demo (CTLine/CTRun/CTFramesetter, attributed runs)"; else ko "coretext_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

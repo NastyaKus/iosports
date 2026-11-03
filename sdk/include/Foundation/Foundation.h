@@ -438,6 +438,18 @@ extern NSString *const NSKeyedArchiveRootObjectKey;
 - (instancetype)initForReadingWithData:(NSData *)data;
 - (void)finishDecoding;
 @end
+@interface NSAttributedString : NSObject <NSCopying, NSMutableCopying>
+- (instancetype)initWithString:(NSString *)str;
+- (instancetype)initWithString:(NSString *)str attributes:(NSDictionary<NSString *, id> *)attrs;
+@property (readonly, copy) NSString *string;
+@property (readonly) NSUInteger length;
+- (NSDictionary<NSString *, id> *)attributesAtIndex:(NSUInteger)i effectiveRange:(NSRange *)r;
+@end
+@interface NSMutableAttributedString : NSAttributedString
+- (void)addAttribute:(NSString *)name value:(id)v range:(NSRange)r;
+- (void)addAttributes:(NSDictionary<NSString *, id> *)attrs range:(NSRange)r;
+- (void)appendAttributedString:(NSAttributedString *)s;
+@end
 @interface NSIndexPath : NSObject <NSCopying>
 + (instancetype)indexPathWithIndex:(NSUInteger)index;
 @property (readonly) NSUInteger length;
