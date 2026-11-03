@@ -5,24 +5,27 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Rect;
+import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
 import java.nio.ByteBuffer;
 
-/** Shows the frames rendered by the runtime (scaled to the view) and forwards touches in points. */
+/**
+ * Shows the frames rendered by the runtime, aspect-fitted to the view (apps in
+ * iOS compatibility mode use a smaller logical screen, like the "zoomed" mode
+ * on an iPhone), and forwards touches in frame pixels.
+ */
 public class IosView extends View {
     private final Object lock = new Object();
     private Bitmap frame;
-    private float screenW = 375, screenH = 667;
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
-    private final Rect dst = new Rect();
+    private final RectF dst = new RectF();
 
     public IosView(Context c) { super(c); setBackgroundColor(Color.BLACK); }
 
-    /** logical iOS screen size in points (the view's size divided by its density) */
-    public void setScreen(float w, float h) { screenW = w; screenH = h; }
+    /** kept for callers that know the logical size; the frame itself defines the mapping */
+    public void setScreen(float w, float h) { }
 
     /** called on the runtime's main thread with premultiplied RGBA pixels */
     public void setFrame(ByteBuffer px, int w, int h) {
@@ -36,16 +39,21 @@ public class IosView extends View {
         postInvalidate();
     }
 
+    private void fitRect(int fw, int fh) {
+        float k = Math.min(getWidth() / (float) fw, getHeight() / (float) fh);
+        float w = fw * k, h = fh * k, x = (getWidth() - w) / 2;
+        dst.set(x, 0, x + w, h);   /* top-aligned, centered horizontally */
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         synchronized (lock) {
             if (frame == null) return;
-            dst.set(0, 0, Math.round(screenW * getWidth() / Math.max(1f, screenW)), Math.round(screenH * getWidth() / Math.max(1f, screenW)));
+            fitRect(frame.getWidth(), frame.getHeight());
             canvas.drawBitmap(frame, null, dst, paint);
         }
     }
 
     @Override public boolean onTouchEvent(MotionEvent e) {
-        float s = getWidth() / Math.max(1f, screenW);
         int phase;
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: phase = 0; break;
@@ -53,7 +61,14 @@ public class IosView extends View {
             case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL: phase = 2; break;
             default: return true;
         }
-        NativeBridge.nativeTouch(phase, e.getX() / s, e.getY() / s);
+        float x, y;
+        synchronized (lock) {
+            if (frame == null) return true;
+            fitRect(frame.getWidth(), frame.getHeight());
+            x = (e.getX() - dst.left) * frame.getWidth() / dst.width();
+            y = (e.getY() - dst.top) * frame.getHeight() / dst.height();
+        }
+        NativeBridge.nativeTouch(phase, x, y);
         return true;
     }
 }

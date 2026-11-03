@@ -228,20 +228,20 @@ static void conn_start(id self, SEL s) {
     rt_schedule_perform_self(self);
 }
 static id conn_init(id self, SEL s, id req, id del, long start) {
-    struct nsconn *c = (struct nsconn *)self; c->request = objc_retain(req); c->delegate = del;
+    struct nsconn *c = (struct nsconn *)self; c->request = objc_retain(req); c->delegate = objc_retain(del);   /* NSURLConnection retains its delegate until it finishes */
     if (start & 0xff) conn_start(self, s);
     return self;
 }
 static id conn_init2(id self, SEL s, id req, id del) { return conn_init(self, s, req, del, 1); }
 static id conn_with(Class c, SEL s, id req, id del) { return objc_autorelease(conn_init2(rt_alloc_instance(c, 0), s, req, del)); }
-static void conn_cancel(id self, SEL s) { (void)s; ((struct nsconn *)self)->delegate = NULL; }
+static void conn_cancel(id self, SEL s) { (void)s; id d = ((struct nsconn *)self)->delegate; ((struct nsconn *)self)->delegate = NULL; objc_release(d); }
 static void conn_noop(id self, SEL s, id a, id b) { (void)self; (void)s; (void)a; (void)b; }
 static void conn_sendAsync(Class c, SEL s, id req, id q, void *blk) {
     (void)c; (void)s; (void)req; (void)q;
     if (blk) ((void (*)(void *, id, id, id))((struct rt_block *)blk)->invoke)(blk, NULL, NULL, offline_error());
 }
 static id conn_sendSync(Class c, SEL s, id req, id *resp, id *err) { (void)c; (void)s; (void)req; if (resp) *resp = NULL; if (err) *err = offline_error(); return NULL; }
-static void conn_fire(id self, SEL s) { (void)s; conn_fail(self); objc_release(self); }
+static void conn_fire(id self, SEL s) { conn_fail(self); conn_cancel(self, s); objc_release(self); }
 
 /* forward declarations used above */
 static rt_bool pred_eval_any(id pred, id obj) { return pred ? (RT_SEND1(long, pred, "evaluateWithObject:", id, obj) & 0xff) != 0 : 1; }

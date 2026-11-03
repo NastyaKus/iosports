@@ -165,6 +165,6 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
 }
 
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeTouch(JNIEnv *env, jclass cls, jint phase, jfloat x, jfloat y) {
-    (void)env; (void)cls; iosrt_push_touch(phase, x, y);
+    (void)env; (void)cls; void iosrt_push_touch_px(int, int, float, float); iosrt_push_touch_px(0, phase, x, y);
 }
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeQuit(JNIEnv *env, jclass cls) { (void)env; (void)cls; iosrt_request_quit(); }

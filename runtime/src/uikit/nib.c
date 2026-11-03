@@ -493,7 +493,10 @@ static id view_initWithCoder(id self, SEL s, id coder) {
     if (decB(coder, "UIHidden")) RT_SEND1(void, self, "setHidden:", long, 1);
     if (decB(coder, "UIClipsToBounds")) RT_SEND1(void, self, "setClipsToBounds:", long, 1);
     v->autoresizing = decI(coder, "UIAutoresizingMask");
-    v->autoresizesSubviews = has(coder, "UIAutoresizeSubviews") ? decB(coder, "UIAutoresizeSubviews") : 1;
+    /* ibtool writes UIAutoresizeSubviews = NO for nearly every view, yet on iOS such
+     * views still autoresize their children (apps rely on it when a 480pt NIB root
+     * is stretched to a 568pt screen), so the key does not switch autoresizing off. */
+    v->autoresizesSubviews = 1;
     v->contentMode = decI(coder, "UIContentMode");
     v->tag = decI(coder, "UITag");
     if (decB(coder, "UIUserInteractionDisabled")) v->interaction = 0;
@@ -524,14 +527,16 @@ static void apply_label(id self, id coder) {
     if (decB(coder, "UIHighlighted")) RT_SEND1(void, self, "setHighlighted:", long, 1);
     if (has(coder, "UIPreferredMaxLayoutWidth")) RT_SEND1(void, self, "setPreferredMaxLayoutWidth:", double, decD(coder, "UIPreferredMaxLayoutWidth"));
 }
-static id label_initWithCoder(id self, SEL s, id coder) { (void)s; self = super_initWithCoder(self, RT_CLASS(UILabel), coder); if (self) { ((struct uiview *)self)->interaction = !has(coder, "UIUserInteractionDisabled") ? 0 : !decB(coder, "UIUserInteractionDisabled"); apply_label(self, coder); } return self; }
+/* NIB-decoded views take user interaction from the archive (UIView's default, enabled),
+ * not from the class's code-path default (labels and image views start disabled) */
+static id label_initWithCoder(id self, SEL s, id coder) { (void)s; self = super_initWithCoder(self, RT_CLASS(UILabel), coder); if (self) { ((struct uiview *)self)->interaction = !decB(coder, "UIUserInteractionDisabled"); apply_label(self, coder); } return self; }
 static id imageview_initWithCoder(id self, SEL s, id coder) {
     (void)s; self = super_initWithCoder(self, RT_CLASS(UIImageView), coder);
     if (!self) return NULL;
     if (has(coder, "UIImage")) RT_SEND1(void, self, "setImage:", id, dec(coder, "UIImage"));
     if (has(coder, "UIHighlightedImage")) RT_SEND1(void, self, "setHighlightedImage:", id, dec(coder, "UIHighlightedImage"));
     if (decB(coder, "UIHighlighted")) RT_SEND1(void, self, "setHighlighted:", long, 1);
-    ((struct uiview *)self)->interaction = has(coder, "UIUserInteractionDisabled") ? !decB(coder, "UIUserInteractionDisabled") : 0;
+    ((struct uiview *)self)->interaction = !decB(coder, "UIUserInteractionDisabled");
     return self;
 }
 static id control_initWithCoder(id self, SEL s, id coder) {

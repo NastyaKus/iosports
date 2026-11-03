@@ -265,6 +265,15 @@ static void ma_removeObject(id self, SEL s, id o) {
     struct nsarr *a = (struct nsarr *)self;
     for (size_t i = a->n; i-- > 0;) if (obj_eq(a->items[i], o)) ma_removeAt(self, s, i);
 }
+static void ma_removeIdentical(id self, SEL s, id o) {
+    struct nsarr *a = (struct nsarr *)self;
+    for (size_t i = a->n; i-- > 0;) if (a->items[i] == o) ma_removeAt(self, s, i);
+}
+static unsigned long a_indexIdentical(id self, SEL s, id o) {
+    (void)s; struct nsarr *a = (struct nsarr *)self;
+    for (size_t i = 0; i < a->n; i++) if (a->items[i] == o) return i;
+    return (unsigned long)-1 >> 1;
+}
 static void ma_removeAll(id self, SEL s) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
     size_t n = a->n; id *old = a->items;
@@ -448,11 +457,11 @@ void rt_collections_init(void) {
     IM(a, "objectEnumerator", a_objectEnumerator); IM(a, "reverseObjectEnumerator", a_reverseEnum);
     IM(a, "copyWithZone:", a_copy); IM(a, "mutableCopyWithZone:", a_mutableCopy); IM(a, "description", coll_description);
     IM(a, "isEqual:", a_isEqual); IM(a, "isEqualToArray:", a_isEqual); IM(a, "hash", a_hash);
-    IM(a, "subarrayWithRange:", a_subarray); IM(a, "makeObjectsPerformSelector:", a_makeObjectsPerform);
+    IM(a, "subarrayWithRange:", a_subarray); IM(a, "makeObjectsPerformSelector:", a_makeObjectsPerform); IM(a, "indexOfObjectIdenticalTo:", a_indexIdentical);
     IM(a, "valueForKey:", a_valueForKey);
     CM(ma, "arrayWithCapacity:", ma_withCapacity); IM(ma, "initWithCapacity:", ma_initWithCapacity);
     IM(ma, "addObject:", ma_add); IM(ma, "insertObject:atIndex:", ma_insert); IM(ma, "removeObjectAtIndex:", ma_removeAt);
-    IM(ma, "removeLastObject", ma_removeLast); IM(ma, "removeFirstObject", ma_removeFirst); IM(ma, "removeObject:", ma_removeObject);
+    IM(ma, "removeLastObject", ma_removeLast); IM(ma, "removeFirstObject", ma_removeFirst); IM(ma, "removeObject:", ma_removeObject); IM(ma, "removeObjectIdenticalTo:", ma_removeIdentical);
     IM(ma, "removeAllObjects", ma_removeAll); IM(ma, "replaceObjectAtIndex:withObject:", ma_replace);
     IM(ma, "setObject:atIndexedSubscript:", ma_setAtIndexed); IM(ma, "addObjectsFromArray:", ma_addArray);
     IM(ma, "exchangeObjectAtIndex:withObjectAtIndex:", ma_exchange);

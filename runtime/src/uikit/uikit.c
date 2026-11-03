@@ -66,6 +66,8 @@ void iosrt_push_touch_id(int tid, int phase, float x, float y) {
     pthread_mutex_unlock(&input_lock);
 }
 void iosrt_push_touch(int phase, float x, float y) { iosrt_push_touch_id(0, phase, x, y); }
+/* touches given in pixels of the presented frame */
+void iosrt_push_touch_px(int tid, int phase, float x, float y) { iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale); }
 void iosrt_request_quit(void) { rt_quit_requested = 1; }
 static volatile int dirty = 1;
 void rt_ui_mark_dirty(void) { dirty = 1; }
@@ -189,7 +191,12 @@ CGRect rt_view_frame(id v) { view_setup(v); return RT_SEND0(CGRect, layer_of(v),
 CGRect rt_view_bounds(id v) { view_setup(v); return RT_SEND0(CGRect, layer_of(v), "bounds"); }
 void rt_view_set_frame(id v, CGRect f) { view_setup(v); RT_SEND1(void, layer_of(v), "setFrame:", CGRect, f); }
 static CGRect v_frame(id self, SEL s) { (void)s; return rt_view_frame(self); }
-static void v_setFrame(id self, SEL s, CGRect r) { (void)s; rt_view_set_frame(self, r); }
+void rt_print_backtrace(void);
+static void v_setFrame(id self, SEL s, CGRect r) {
+    (void)s;
+    if (getenv("IOSRT_TRACE_FRAMES")) { char b[256]; int n = snprintf(b, sizeof b, "[frames] %s %p setFrame (%g,%g %gx%g)\n", rt_class_name(self->isa), (void *)self, r.origin.x, r.origin.y, r.size.width, r.size.height); rt_out(2, b, (size_t)n); rt_print_backtrace(); }
+    rt_view_set_frame(self, r);
+}
 static CGRect v_bounds(id self, SEL s) { (void)s; return rt_view_bounds(self); }
 static void v_setBounds(id self, SEL s, CGRect r) { (void)s; view_setup(self); RT_SEND1(void, layer_of(self), "setBounds:", CGRect, r); }
 static CGPoint v_center(id self, SEL s) { (void)s; view_setup(self); return RT_SEND0(CGPoint, layer_of(self), "position"); }
@@ -330,6 +337,7 @@ static void v_noop(id self, SEL s) { (void)self; (void)s; }
 static void v_noop1(id self, SEL s, id a) { (void)self; (void)s; (void)a; }
 static void v_noopL(id self, SEL s, long a) { (void)self; (void)s; (void)a; }
 static void v_noopD(id self, SEL s, double a) { (void)self; (void)s; (void)a; }
+static void v_noopFL(id self, SEL s, float a, long b) { (void)self; (void)s; (void)a; (void)b; }
 static id v_nil(id self, SEL s) { (void)self; (void)s; return NULL; }
 static double v_contentScale(id self, SEL s) { (void)self; (void)s; return rt_scr_scale; }
 static CGSize v_sizeThatFits(id self, SEL s, CGSize sz) { (void)s; (void)sz; return rt_view_bounds(self).size; }
@@ -635,7 +643,7 @@ void rt_send_action(SEL action, id target, id sender, id event) {
     ((void (*)(id, SEL, id, id))objc_msgSend)(target, action, sender, event);
 }
 static rt_bool app_sendAction(id self, SEL s, SEL action, id target, id sender, id event) { (void)self; (void)s; rt_send_action(action, target, sender, event); return 1; }
-static id app_nextResponder(id self, SEL s) { (void)s; return ((struct uiapp *)self)->delegate; }
+static id app_nextResponder(id self, SEL s) { (void)s; id d = ((struct uiapp *)self)->delegate; return d && rt_is_kind_of(d, RT_CLASS(UIResponder)) ? d : NULL; }
 static id app_preferredLanguage(id self, SEL s) { (void)self; (void)s; return rt_str("en"); }
 
 /* ============================================================ UITouch/UIEvent */
@@ -1052,6 +1060,15 @@ static void run_script(unsigned frame) {
     }
     free(dup);
 }
+static void dump_view(id v, int depth) {
+    CGRect f = rt_view_frame(v), b = rt_view_bounds(v);
+    char line[512];
+    int n = snprintf(line, sizeof line, "%*s%s frame=(%g,%g %gx%g) bounds.origin=(%g,%g) mask=%ld%s%s%s\n", depth * 2, "", rt_class_name(v->isa),
+                     f.origin.x, f.origin.y, f.size.width, f.size.height, b.origin.x, b.origin.y, V(v)->autoresizing,
+                     v_hidden(v, NULL) ? " hidden" : "", V(v)->vc ? " vc=" : "", V(v)->vc ? rt_class_name(V(v)->vc->isa) : "");
+    rt_out(2, line, (size_t)n);
+    for (size_t i = 0; V(v)->subviews && i < rt_array_count(V(v)->subviews); i++) dump_view(rt_array_at(V(v)->subviews, i), depth + 1);
+}
 static struct cgctx *g_screen_ctx;
 static char *last_dump;
 static int window_cmp(const void *a, const void *b) { double x = W(*(id *)a)->level, y = W(*(id *)b)->level; return x < y ? -1 : x > y; }
@@ -1091,9 +1108,38 @@ static void finish_launch(id app) {
         if (W(win)->root && !((struct uivc *)W(win)->root)->appeared) rt_vc_appear(W(win)->root, 1);
     }
 }
+/* iOS compatibility ("zoomed") mode: an app without a launch storyboard only
+ * gets the largest iPhone screen it ships a launch image for (else 320x480);
+ * the system scales that up to the display. */
+static void choose_compat_screen(void) {
+    if (getenv("IOSRT_NO_COMPAT_SCREEN")) return;
+    id bundle = RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle");
+    id info = bundle ? RT_SEND0(id, bundle, "infoDictionary") : NULL;
+    if (!info || rt_dict_get(info, rt_str("UILaunchStoryboardName")) || rt_dict_get(info, rt_str("UILaunchStoryboardName~iphone"))) return;
+    const char *bdir = rt_str_utf8(RT_SEND0(id, bundle, "bundlePath"));
+    char plist[4096]; snprintf(plist, sizeof plist, "%s/Info.plist", bdir);
+    if (access(plist, F_OK) != 0) return;          /* a bare Mach-O: no launch metadata to go by */
+    double bw = 320, bh = 480;
+    id imgs = rt_dict_get(info, rt_str("UILaunchImages"));
+    for (size_t i = 0; imgs && i < rt_array_count(imgs); i++) {
+        id e = rt_array_at(imgs, i);
+        id sz = rt_dict_get(e, rt_str("UILaunchImageSize")), orient = rt_dict_get(e, rt_str("UILaunchImageOrientation"));
+        if (!sz || (orient && strcmp(rt_str_utf8(orient), "Portrait"))) continue;
+        double w = 0, h = 0; sscanf(rt_str_utf8(sz), "{%lf, %lf}", &w, &h);
+        if (w >= 768) continue;                     /* iPad images */
+        if (h > bh || (h == bh && w > bw)) { bw = w; bh = h; }
+    }
+    const char *dir = rt_str_utf8(RT_SEND0(id, bundle, "bundlePath"));
+    char p[4096]; snprintf(p, sizeof p, "%s/Default-568h@2x.png", dir);
+    if (bh < 568 && access(p, F_OK) == 0) { bw = 320; bh = 568; }
+    if (bw >= rt_scr_w && bh >= rt_scr_h) return;
+    rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);
+    rt_scr_w = (float)bw; rt_scr_h = (float)bh; rt_scr_scale = 2;
+}
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
     (void)argc; (void)argv;
     void *pool = objc_autoreleasePoolPush();
+    choose_compat_screen();
     Class appc = principal ? rt_class_named(rt_str_utf8(principal)) : NULL;
     id app = app_shared(appc ? appc : RT_CLASS(UIApplication), NULL);
     Class dc = delegateName ? rt_class_named(rt_str_utf8(delegateName)) : find_delegate_class();
@@ -1156,6 +1202,10 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
         if (max_frames) usleep(1000);
     }
     if (max_frames && last_dump && !getenv("IOSRT_DUMP_FRAMES")) rt_out(1, last_dump, strlen(last_dump));
+    if (getenv("IOSRT_DUMP_VIEWS")) {
+        struct uiapp *a = (struct uiapp *)app;
+        for (size_t i = 0; i < rt_array_count(a->windows); i++) dump_view(rt_array_at(a->windows, i), 0);
+    }
     const char *png = getenv("IOSRT_PNG_OUT");
     if (png && g_screen_ctx) {
         struct gfx_surface *s = rt_cg_surface(g_screen_ctx);
@@ -1237,7 +1287,7 @@ void rt_uikit_init(void) {
     IM(r, "canPerformAction:withSender:", r_canPerform); IM(r, "targetForAction:withSender:", r_targetForAction);
     IM(r, "motionBegan:withEvent:", r_noop2); IM(r, "motionEnded:withEvent:", r_noop2); IM(r, "remoteControlReceivedWithEvent:", r_noop1);
     IM(r, "inputView", r_nil); IM(r, "inputAccessoryView", r_nil); IM(r, "undoManager", r_nil); IM(r, "reloadInputViews", v_noop);
-    IM(r, "pressesBegan:withEvent:", r_noop2); IM(r, "pressesEnded:withEvent:", r_noop2);
+    IM(r, "pressesBegan:withEvent:", r_noop2); IM(r, "setInputView:", r_noop1); IM(r, "setInputAccessoryView:", r_noop1); IM(r, "pressesEnded:withEvent:", r_noop2);
 
     NEWCLASS(UIApplication, r, sizeof(struct uiapp) - sizeof(void *));
     Class ap = RT_CLASS(UIApplication);
@@ -1315,7 +1365,9 @@ void rt_uikit_init(void) {
     IM(v, "accessibilityIdentifier", v_accId); IM(v, "setAccessibilityIdentifier:", v_setAccId);
     IM(v, "setIsAccessibilityElement:", v_noopL); IM(v, "setAccessibilityTraits:", v_noopL); IM(v, "setAccessibilityHint:", v_noop1);
     IM(v, "setAccessibilityValue:", v_noop1); IM(v, "setAccessibilityViewIsModal:", v_noopL); IM(v, "setAccessibilityElementsHidden:", v_noopL);
-    IM(v, "setTranslatesAutoresizingMaskIntoConstraints:", v_noopL); IM(v, "addConstraint:", v_noop1); IM(v, "addConstraints:", v_noop1);
+    IM(v, "setTranslatesAutoresizingMaskIntoConstraints:", v_noopL); IM(v, "setShouldGroupAccessibilityChildren:", v_noopL);
+    IM(v, "setContentHuggingPriority:forAxis:", v_noopFL); IM(v, "setContentCompressionResistancePriority:forAxis:", v_noopFL);
+    IM(v, "setAccessibilityContainerType:", v_noopL); IM(v, "setAccessibilityElements:", v_noop1); IM(v, "addConstraint:", v_noop1); IM(v, "addConstraints:", v_noop1);
     IM(v, "removeConstraint:", v_noop1); IM(v, "removeConstraints:", v_noop1); IM(v, "constraints", v_nil); IM(v, "updateConstraintsIfNeeded", v_noop);
     IM(v, "setNeedsUpdateConstraints", v_noop); IM(v, "updateConstraints", v_noop);
     IM(v, "setOpaque:", v_noopL); IM(v, "setClearsContextBeforeDrawing:", v_noopL); IM(v, "setPreservesSuperviewLayoutMargins:", v_noopL);

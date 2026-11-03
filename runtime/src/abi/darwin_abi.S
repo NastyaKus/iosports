@@ -53,6 +53,7 @@ DVAR iosrt_imp_setWithObjects,             rt_NSSet_setWithObjects,             
 DVAR iosrt_imp_setInitWithObjects,         rt_NSSet_initWithObjects,               x3
 DVAR iosrt_imp_handleFailureInMethod,      rt_NSAssertionHandler_handleFailure,    x7
 DVAR iosrt_imp_handleFailureInFunction,    rt_NSAssertionHandler_handleFailureFn,  x6
+DVAR iosrt_tramp_NSDictionaryOfVariableBindings, rt_NSDictionaryOfVariableBindings, x2
 DVAR iosrt_imp_UIAlertView_init,           rt_UIAlertView_init,                    x7
 DVAR iosrt_imp_UIActionSheet_init,         rt_UIActionSheet_init,                  x7
 

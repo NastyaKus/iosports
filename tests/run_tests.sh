@@ -56,6 +56,8 @@ for flavor in linux-aarch64 android-arm64; do
   if [ $rc = 0 ] && diff -u "$root/tests/golden/uikit_hello.txt" "$T/out.txt" >"$T/diff.txt"; then ok "uikit_hello (rendered frame trace + touches)"; else ko "uikit_hello rc=$rc" "$T/diff.txt"; fi
   IOSRT_HEADLESS_FRAMES=2 $R "$S/Counter.app" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && grep -q '"taps: 0' "$T/out.txt"; then ok ".app bundle via Info.plist"; else ko ".app bundle rc=$rc" "$T/out.txt"; fi
+  # no launch storyboard / launch images: iOS compatibility screen (320x480, scaled up)
+  if grep -q 'launched, window {{0, 0}, {320, 480}}' "$T/out.txt"; then ok "compatibility screen for legacy bundles"; else ko "compatibility screen" "$T/out.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

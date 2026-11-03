@@ -171,6 +171,7 @@ static long im_leftCap(id self, SEL s) { (void)s; return (long)((struct uiimage 
 static long im_topCap(id self, SEL s) { (void)s; return (long)((struct uiimage *)self)->caps.top; }
 static id im_withRenderingMode(id self, SEL s, long mode) { (void)s; id r = im_clone(self); ((struct uiimage *)r)->renderingMode = mode; return r; }
 static id im_self(id self, SEL s) { (void)s; return self; }
+static void im_noop1(id self, SEL s, id v) { (void)self; (void)s; (void)v; }
 static id im_self1(id self, SEL s, UIEdgeInsets e) { (void)s; (void)e; return self; }
 static id im_withTint(id self, SEL s, id color) {
     (void)s;
@@ -264,5 +265,5 @@ void rt_uiimage_init(void) {
     IM(c, "imageFlippedForRightToLeftLayoutDirection", im_self); IM(c, "imageWithTintColor:", im_withTint);
     IM(c, "drawInRect:", im_drawInRect); IM(c, "drawAtPoint:", im_drawAtPoint); IM(c, "drawInRect:blendMode:alpha:", im_drawInRectBA);
     IM(c, "drawAtPoint:blendMode:alpha:", im_drawAtPointBA); IM(c, "drawAsPatternInRect:", im_drawAsPattern);
-    IM(c, "description", im_description); IM(c, "images", im_images); IM(c, "duration", im_duration);
+    IM(c, "description", im_description); IM(c, "setAccessibilityLabel:", im_noop1); IM(c, "setAccessibilityIdentifier:", im_noop1); IM(c, "images", im_images); IM(c, "duration", im_duration);
 }
