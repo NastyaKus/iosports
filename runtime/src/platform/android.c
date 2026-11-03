@@ -155,6 +155,9 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
     const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
     const char *home = (*env)->GetStringUTFChars(env, jhome, NULL);
     setenv("IOSRT_HOME", home, 1);
+    /* the shell runs apps leniently: missing APIs return 0/nil and Foundation's
+       recoverable errors are logged instead of ending the app (tests use strict mode) */
+    setenv("IOSRT_STRICT", "0", 0);
     iosrt_set_screen(w, h, scale);
     char *p = rt_xstrdup(path);
     char *argv[2] = { p, NULL };
