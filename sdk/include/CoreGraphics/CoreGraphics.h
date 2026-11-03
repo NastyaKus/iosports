@@ -1,5 +1,8 @@
 #pragma once
 #include <stdbool.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef double CGFloat;
 typedef struct CGPoint { CGFloat x, y; } CGPoint;
 typedef struct CGSize { CGFloat width, height; } CGSize;
@@ -27,3 +30,6 @@ void CGContextStrokeEllipseInRect(CGContextRef, CGRect);
 void CGContextMoveToPoint(CGContextRef, CGFloat, CGFloat);
 void CGContextAddLineToPoint(CGContextRef, CGFloat, CGFloat);
 void CGContextStrokePath(CGContextRef);
+#ifdef __cplusplus
+}
+#endif

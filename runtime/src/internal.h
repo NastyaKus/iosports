@@ -52,6 +52,7 @@ struct objc_class {
 /* ------------------------------------------------------------------ util */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+int  rt_first_time(const char *key);   /* 1 the first time a key is seen */
 void *rt_xmalloc(size_t n);
 void *rt_xcalloc(size_t n, size_t m);
 char *rt_xstrdup(const char *s);
@@ -232,6 +233,7 @@ extern id objc_msgSendSuper(void *super, SEL, ...);
 #define RT_SEND0(R, obj, sel) (((R (*)(id, SEL))objc_msgSend)((obj), rt_sel(sel)))
 #define RT_SEND1(R, obj, sel, T1, a1) (((R (*)(id, SEL, T1))objc_msgSend)((obj), rt_sel(sel), (a1)))
 #define RT_SEND2(R, obj, sel, T1, a1, T2, a2) (((R (*)(id, SEL, T1, T2))objc_msgSend)((obj), rt_sel(sel), (a1), (a2)))
+#define RT_SEND3(R, obj, sel, T1, a1, T2, a2, T3, a3) (((R (*)(id, SEL, T1, T2, T3))objc_msgSend)((obj), rt_sel(sel), (a1), (a2), (a3)))
 
 /* memory management */
 id   rt_alloc_instance(Class cls, size_t extra);

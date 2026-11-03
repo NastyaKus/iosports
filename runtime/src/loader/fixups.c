@@ -82,8 +82,10 @@ static int do_rebase(struct rt_image *img, char *err, size_t errlen) {
     return 0;
 }
 
+extern int rt_bind_kind;   /* 0 unknown (chained), 1 non-lazy (GOT/data), 2 lazy (stub -> function) */
 static int do_bind(struct rt_image *img, uint32_t foff, uint32_t fsize, int lazy, char *err, size_t errlen) {
     if (!fsize) return 0;
+    rt_bind_kind = lazy ? 2 : 1;
     if ((uint64_t)foff + fsize > img->file_size) { snprintf(err, errlen, "bind info out of bounds"); return -1; }
     const uint8_t *p = img->file + foff, *end = p + fsize;
     int seg = 0; uint64_t off = 0; int64_t ord = 0, addend = 0;
@@ -136,6 +138,7 @@ int rt_fixups_dyldinfo(struct rt_image *img, char *err, size_t errlen) {
     if (do_rebase(img, err, errlen)) return -1;
     if (do_bind(img, img->bind_off, img->bind_size, 0, err, errlen)) return -1;
     if (do_bind(img, img->lazy_off, img->lazy_size, 1, err, errlen)) return -1;
+    rt_bind_kind = 0;
     /* weak binds only matter for C++ coalescing across images; single image -> nothing to do */
     rt_log("dyld-info fixups: %u rebases, %u binds", img->n_rebases, img->n_binds);
     return 0;

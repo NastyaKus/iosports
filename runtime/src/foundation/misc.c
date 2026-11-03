@@ -342,6 +342,7 @@ static id b_main(Class c, SEL s) {
     }
     return g_main_bundle;
 }
+static id b_forClass(Class c, SEL s, Class k) { (void)k; return b_main(c, s); }
 static id b_bundlePath(id self, SEL s) { (void)s; return ((struct nsbundle *)self)->path; }
 static id b_info(id self, SEL s) { (void)s; return ((struct nsbundle *)self)->info; }
 static id b_infoKey(id self, SEL s, id k) { (void)s; return rt_dict_get(((struct nsbundle *)self)->info, k); }
@@ -362,7 +363,11 @@ static id b_pathForResourceDir(id self, SEL s, id name, id type, id sub) {
     id n2 = RT_SEND1(id, sub, "stringByAppendingPathComponent:", id, name);
     return b_pathForResource(self, s, n2, type);
 }
-static id b_URLForResource(id self, SEL s, id name, id ext) { return b_pathForResource(self, s, name, ext); }
+static id b_URLForResource(id self, SEL s, id name, id ext) {
+    id p = b_pathForResource(self, s, name, ext);
+    return p ? RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, p) : NULL;
+}
+static id b_bundleURL(id self, SEL s) { return RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, b_bundlePath(self, s)); }
 static id b_localized(id self, SEL s, id key, id value, id table) {
     (void)s; struct nsbundle *b = (struct nsbundle *)self;
     if (!b->strings) {
@@ -403,38 +408,187 @@ static id ex_reason(id self, SEL s) { (void)s; return ((struct nsexc *)self)->re
 static id ex_userInfo(id self, SEL s) { (void)s; return ((struct nsexc *)self)->userInfo; }
 
 /* =================================================================== NSThread */
-static id g_main_thread_obj, g_other_thread_obj;
+struct nsthread { Class isa; id target; SEL sel; id arg; void *block; id name; long cancelled, executing, finished; double prio; id dict; void *rl; };
+static id g_main_thread_obj;
+static __thread id t_current_thread;
 static rt_bool th_isMain(Class c, SEL s) { (void)c; (void)s; return rt_is_guest_main_thread(); }
 static rt_bool th_iisMain(id self, SEL s) { (void)s; return self == g_main_thread_obj; }
-static id th_current(Class c, SEL s) { (void)s; return rt_is_guest_main_thread() ? singleton(c, &g_main_thread_obj) : singleton(c, &g_other_thread_obj); }
 static id th_main(Class c, SEL s) { (void)s; return singleton(c, &g_main_thread_obj); }
+static id th_current(Class c, SEL s) {
+    if (rt_is_guest_main_thread()) return th_main(c, s);
+    if (!t_current_thread) t_current_thread = rt_alloc_instance(c, 0);   /* adopted foreign thread */
+    return t_current_thread;
+}
 static void th_sleep(Class c, SEL s, double t) { (void)c; (void)s; if (t > 0) { struct timespec ts = { (time_t)t, (long)((t - floor(t)) * 1e9) }; nanosleep(&ts, NULL); } }
-struct detach { id target; SEL sel; id arg; };
-static void *detach_main(void *p) {
-    struct detach d = *(struct detach *)p; free(p);
+static void th_sleepUntil(Class c, SEL s, id d) { th_sleep(c, s, d ? RT_SEND0(double, d, "timeIntervalSinceNow") : 0); }
+static id th_initTarget(id self, SEL s, id target, SEL sel, id arg) { (void)s; struct nsthread *t = (struct nsthread *)self; t->target = objc_retain(target); t->sel = sel; t->arg = objc_retain(arg); return self; }
+static id th_initBlock(id self, SEL s, void *blk) { (void)s; ((struct nsthread *)self)->block = _Block_copy(blk); return self; }
+static void th_mainMethod(id self, SEL s) {
+    (void)s; struct nsthread *t = (struct nsthread *)self;
+    if (t->block) ((void (*)(void *))((struct rt_block *)t->block)->invoke)(t->block);
+    else if (t->target) ((void (*)(id, SEL, id))objc_msgSend)(t->target, t->sel, t->arg);
+}
+static void *th_entry(void *p) {
+    id self = p; struct nsthread *t = (struct nsthread *)self;
+    t_current_thread = self;
+    void rt_thread_register(void); void rt_thread_unregister(void);
+    rt_thread_register();
+    if (t->name) { char b[16]; snprintf(b, sizeof b, "%s", rt_str_utf8(t->name)); pthread_setname_np(pthread_self(), b); }
     void *pool = objc_autoreleasePoolPush();
-    ((void (*)(id, SEL, id))objc_msgSend)(d.target, d.sel, d.arg);
+    t->executing = 1;
+    RT_SEND0(void, self, "main");
+    t->executing = 0; t->finished = 1;
     objc_autoreleasePoolPop(pool);
-    objc_release(d.target); objc_release(d.arg);
+    rt_thread_unregister();
+    objc_release(self);
     return NULL;
 }
+static void th_start(id self, SEL s) {
+    (void)s; objc_retain(self);
+    pthread_t pt; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&a, 1 << 20);
+    pthread_create(&pt, &a, th_entry, self); pthread_attr_destroy(&a);
+}
+static void th_cancel(id self, SEL s) { (void)s; ((struct nsthread *)self)->cancelled = 1; }
+static rt_bool th_isCancelled(id self, SEL s) { (void)s; return ((struct nsthread *)self)->cancelled; }
+static rt_bool th_isExecuting(id self, SEL s) { (void)s; return ((struct nsthread *)self)->executing; }
+static rt_bool th_isFinished(id self, SEL s) { (void)s; return ((struct nsthread *)self)->finished; }
+static id th_name(id self, SEL s) { (void)s; return ((struct nsthread *)self)->name; }
+static void th_setName(id self, SEL s, id n) { (void)s; struct nsthread *t = (struct nsthread *)self; id c = n ? RT_SEND0(id, n, "copy") : NULL; objc_release(t->name); t->name = c; }
+static double th_prio(id self, SEL s) { (void)s; return ((struct nsthread *)self)->prio; }
+static void th_setPrio(id self, SEL s, double p) { (void)s; ((struct nsthread *)self)->prio = p; }
+static rt_bool th_csetPrio(Class c, SEL s, double p) { (void)c; (void)s; (void)p; return 1; }
+static void th_noopL(id self, SEL s, long v) { (void)self; (void)s; (void)v; }
+static id th_dict(id self, SEL s) { (void)s; struct nsthread *t = (struct nsthread *)self; if (!t->dict) t->dict = RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSMutableDictionary), "alloc"), "init"); return t->dict; }
+static void th_exit(Class c, SEL s) { (void)c; (void)s; pthread_exit(NULL); }
 static void th_detach(Class c, SEL s, SEL sel, id target, id arg) {
-    (void)c; (void)s; struct detach *d = rt_xmalloc(sizeof *d); d->target = objc_retain(target); d->sel = sel; d->arg = objc_retain(arg);
-    pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
-    pthread_create(&t, &a, detach_main, d); pthread_attr_destroy(&a);
+    (void)s; id t = th_initTarget(rt_alloc_instance(c, 0), NULL, target, sel, arg); th_start(t, NULL); objc_release(t);
+}
+static void th_detachBlock(Class c, SEL s, void *blk) { (void)s; id t = th_initBlock(rt_alloc_instance(c, 0), NULL, blk); th_start(t, NULL); objc_release(t); }
+/* ============================================== run loops (one per thread)
+ * The main thread's loop also drains the main dispatch queue. Other threads
+ * get a loop lazily (NSRunLoop currentRunLoop / CFRunLoopGetCurrent / a
+ * performSelector:onThread: aimed at them); it holds timers, queued
+ * performs and a count of attached ports, and sleeps on a condvar. As on iOS,
+ * a secondary loop with no sources returns from -run immediately. */
+void iosrt_dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+void iosrt_dispatch_sync_f(void *q, void *ctx, void (*fn)(void *));
+extern char iosrt_dispatch_main_q[];
+void rt_main_queue_wait(int ms);
+struct rl_item { struct rl_item *next; id target; SEL sel; id arg; void *block; volatile int *done; };
+struct rloop {
+    Class isa; int is_main; volatile int stop; int ports;
+    pthread_mutex_t m; pthread_cond_t c;
+    id *timers; size_t ntimers, cap;
+    struct rl_item *head, *tail;
+    struct rloop *next_all;
+};
+struct nstimer { Class isa; double fire, interval; long repeats, valid; id target; SEL sel; id userInfo; void *block; };
+static pthread_mutex_t rl_all_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t rl_done_cond = PTHREAD_COND_INITIALIZER;
+static struct rloop *rl_all, *g_main_rl;
+static __thread struct rloop *t_rl;
+static struct rloop *rl_new(int is_main) {
+    struct rloop *r = (struct rloop *)rt_alloc_instance(RT_CLASS(NSRunLoop), 0);
+    r->is_main = is_main;
+    pthread_mutex_init(&r->m, NULL); pthread_cond_init(&r->c, NULL);
+    r->next_all = rl_all; rl_all = r;     /* caller holds rl_all_lock */
+    return r;
+}
+static struct rloop *main_rl(void) {
+    if (!g_main_rl) { pthread_mutex_lock(&rl_all_lock); if (!g_main_rl) g_main_rl = rl_new(1); pthread_mutex_unlock(&rl_all_lock); }
+    return g_main_rl;
+}
+static struct rloop *rl_for_thread(id th) {
+    if (!th || th == g_main_thread_obj) return main_rl();
+    struct nsthread *t = (struct nsthread *)th;
+    pthread_mutex_lock(&rl_all_lock);
+    if (!t->rl) t->rl = rl_new(0);
+    pthread_mutex_unlock(&rl_all_lock);
+    return t->rl;
+}
+static struct rloop *rl_current_loop(void) {
+    if (rt_is_guest_main_thread()) return main_rl();
+    if (!t_rl) t_rl = rl_for_thread(th_current(RT_CLASS(NSThread), NULL));
+    return t_rl;
+}
+static void main_nop(void *p) { (void)p; }
+static void rl_wake(struct rloop *r) {
+    pthread_mutex_lock(&r->m); pthread_cond_broadcast(&r->c); pthread_mutex_unlock(&r->m);
+    if (r->is_main && !rt_is_guest_main_thread()) iosrt_dispatch_async_f(iosrt_dispatch_main_q, NULL, main_nop);
+}
+static void rl_add_timer(struct rloop *r, id t) {
+    pthread_mutex_lock(&r->m);
+    if (r->ntimers == r->cap) { r->cap = r->cap ? r->cap * 2 : 16; r->timers = realloc(r->timers, r->cap * sizeof(id)); }
+    r->timers[r->ntimers++] = objc_retain(t);
+    pthread_mutex_unlock(&r->m);
+    if (r != rl_current_loop()) rl_wake(r);
+}
+static void rl_post(struct rloop *r, id target, SEL sel, id arg, void *block, volatile int *done) {
+    struct rl_item *it = rt_xcalloc(1, sizeof *it);
+    it->target = objc_retain(target); it->sel = sel; it->arg = objc_retain(arg); it->block = block ? _Block_copy(block) : NULL; it->done = done;
+    pthread_mutex_lock(&r->m);
+    if (r->tail) r->tail->next = it; else r->head = it;
+    r->tail = it;
+    pthread_mutex_unlock(&r->m);
+    rl_wake(r);
+}
+static int rl_run_items(struct rloop *r) {
+    pthread_mutex_lock(&r->m);
+    struct rl_item *it = r->head; r->head = r->tail = NULL;
+    pthread_mutex_unlock(&r->m);
+    int n = 0;
+    while (it) {
+        struct rl_item *next = it->next;
+        void *pool = objc_autoreleasePoolPush();
+        if (it->block) { ((void (*)(void *))((struct rt_block *)it->block)->invoke)(it->block); _Block_release(it->block); }
+        else ((void (*)(id, SEL, id))objc_msgSend)(it->target, it->sel, it->arg);
+        objc_autoreleasePoolPop(pool);
+        objc_release(it->target); objc_release(it->arg);
+        if (it->done) { pthread_mutex_lock(&rl_all_lock); *it->done = 1; pthread_cond_broadcast(&rl_done_cond); pthread_mutex_unlock(&rl_all_lock); }
+        free(it); it = next; n++;
+    }
+    return n;
+}
+static int rl_has_sources(struct rloop *r) {
+    pthread_mutex_lock(&r->m);
+    int any = r->ntimers > 0 || r->head || r->ports > 0;
+    pthread_mutex_unlock(&r->m);
+    return any || (r->is_main && rt_main_queue_pending());
 }
 
-/* ==================================================== NSTimer / NSRunLoop */
-struct nstimer { Class isa; double fire, interval; long repeats, valid; id target; SEL sel; id userInfo; void *block; };
-static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
-static id *timers; static size_t ntimers, captimers;
-static volatile int runloop_stop;
-static void add_timer(id t) {
-    pthread_mutex_lock(&timer_lock);
-    if (ntimers == captimers) { captimers = captimers ? captimers * 2 : 16; timers = realloc(timers, captimers * sizeof(id)); }
-    timers[ntimers++] = objc_retain(t);
-    pthread_mutex_unlock(&timer_lock);
+/* -performSelector:onThread:withObject:waitUntilDone: */
+static void perform_on_loop(struct rloop *r, id target, SEL sel, id arg, long wait) {
+    if (r == rl_current_loop()) {
+        if (wait & 0xff) { ((void (*)(id, SEL, id))objc_msgSend)(target, sel, arg); return; }
+        rl_post(r, target, sel, arg, NULL, NULL); return;
+    }
+    if (!(wait & 0xff)) { rl_post(r, target, sel, arg, NULL, NULL); return; }
+    volatile int done = 0;
+    rl_post(r, target, sel, arg, NULL, &done);
+    pthread_mutex_lock(&rl_all_lock);
+    while (!done) pthread_cond_wait(&rl_done_cond, &rl_all_lock);
+    pthread_mutex_unlock(&rl_all_lock);
 }
+struct perf { id target; SEL sel; id arg; };
+static void perf_run(void *p) { struct perf *x = p; ((void (*)(id, SEL, id))objc_msgSend)(x->target, x->sel, x->arg); objc_release(x->target); objc_release(x->arg); free(x); }
+static void o_performOnMain(id self, SEL s, SEL sel, id arg, long wait) {
+    (void)s;
+    if ((wait & 0xff) && rt_is_guest_main_thread()) { ((void (*)(id, SEL, id))objc_msgSend)(self, sel, arg); return; }
+    struct perf *x = rt_xmalloc(sizeof *x); x->target = objc_retain(self); x->sel = sel; x->arg = objc_retain(arg);
+    if (wait & 0xff) iosrt_dispatch_sync_f(iosrt_dispatch_main_q, x, perf_run);
+    else iosrt_dispatch_async_f(iosrt_dispatch_main_q, x, perf_run);
+}
+static void o_performOnThread(id self, SEL s, SEL sel, id thread, id arg, long wait) {
+    if (!thread || thread == g_main_thread_obj) { o_performOnMain(self, s, sel, arg, wait); return; }
+    perform_on_loop(rl_for_thread(thread), self, sel, arg, wait);
+}
+static void o_performOnThreadModes(id self, SEL s, SEL sel, id thread, id arg, long wait, id modes) { (void)modes; o_performOnThread(self, s, sel, thread, arg, wait); }
+static void o_performInBackground(id self, SEL s, SEL sel, id arg) { th_detach(RT_CLASS(NSThread), s, sel, self, arg); }
+
+/* ==================================================== NSTimer / NSRunLoop */
+static volatile int runloop_stop;   /* legacy global stop (rt_runloop_stop) for the main loop */
+static void add_timer(id t) { rl_add_timer(rl_current_loop(), t); }
 static id timer_make(Class c, double iv, id target, SEL sel, id info, long rep, void *block) {
     id r = rt_alloc_instance(c ? c : RT_CLASS(NSTimer), 0); struct nstimer *t = (struct nstimer *)r;
     t->interval = iv < 0.0001 ? 0.0001 : iv; t->fire = now_ref() + t->interval; t->repeats = rep & 0xff; t->valid = 1;
@@ -444,16 +598,18 @@ static id timer_make(Class c, double iv, id target, SEL sel, id info, long rep, 
 static id tm_scheduled(Class c, SEL s, double iv, id target, SEL sel, id info, long rep) { (void)s; id t = timer_make(c, iv, target, sel, info, rep, NULL); add_timer(t); return t; }
 static id tm_scheduledBlock(Class c, SEL s, double iv, long rep, void *blk) { (void)s; id t = timer_make(c, iv, NULL, NULL, NULL, rep, blk); add_timer(t); return t; }
 static id tm_timer(Class c, SEL s, double iv, id target, SEL sel, id info, long rep) { (void)s; return timer_make(c, iv, target, sel, info, rep, NULL); }
+static id tm_timerBlock(Class c, SEL s, double iv, long rep, void *blk) { (void)s; return timer_make(c, iv, NULL, NULL, NULL, rep, blk); }
 static void tm_invalidate(id self, SEL s) { (void)s; ((struct nstimer *)self)->valid = 0; }
 static rt_bool tm_isValid(id self, SEL s) { (void)s; return ((struct nstimer *)self)->valid; }
 static id tm_userInfo(id self, SEL s) { (void)s; return ((struct nstimer *)self)->userInfo; }
+static double tm_interval(id self, SEL s) { (void)s; return ((struct nstimer *)self)->interval; }
 static void tm_fire(id self, SEL s) {
     (void)s; struct nstimer *t = (struct nstimer *)self;
     if (t->block) ((void (*)(void *, id))((struct rt_block *)t->block)->invoke)(t->block, self);
     else if (t->target) ((void (*)(id, SEL, id))objc_msgSend)(t->target, t->sel, self);
 }
 static void tm_dealloc(id self, SEL s) { (void)s; struct nstimer *t = (struct nstimer *)self; objc_release(t->target); objc_release(t->userInfo); if (t->block) _Block_release(t->block); rt_dealloc_instance(self); }
-struct perform_ctx { Class isa; id target; SEL sel; id arg; };
+/* -performSelector:withObject:afterDelay: — a one-shot timer on the current thread's loop */
 void rt_schedule_perform(id target, SEL sel, id arg, double delay) {
     id t = timer_make(NULL, delay, NULL, NULL, NULL, 0, NULL);
     struct nstimer *tm = (struct nstimer *)t;
@@ -461,20 +617,34 @@ void rt_schedule_perform(id target, SEL sel, id arg, double delay) {
     tm->interval = delay; tm->fire = now_ref() + delay; tm->repeats = -1;   /* -1: perform with userInfo as argument */
     add_timer(t);
 }
-/* Run one iteration of the main run loop: main queue + due timers. Returns ms until next timer (or -1). */
-int rt_runloop_run_once(int max_wait_ms) {
-    rt_runloop_drain_main_queue();
+static void cancel_perform(id target, SEL sel, int match_sel) {
+    struct rloop *r = rl_current_loop();
+    pthread_mutex_lock(&r->m);
+    for (size_t i = 0; i < r->ntimers; i++) {
+        struct nstimer *t = (struct nstimer *)r->timers[i];
+        if (t->repeats == -1 && t->target == target && (!match_sel || t->sel == sel)) t->valid = 0;
+    }
+    pthread_mutex_unlock(&r->m);
+}
+static void cancel_perform1(Class c, SEL s, id target) { (void)c; (void)s; cancel_perform(target, NULL, 0); }
+static void cancel_perform3(Class c, SEL s, id target, SEL sel, id arg) { (void)c; (void)s; (void)arg; cancel_perform(target, sel, 1); }
+
+/* One iteration of a loop: queued performs, due timers (and the main queue on
+ * the main loop), then sleep up to max_wait_ms. Returns ms until the next timer (or -1). */
+static int rl_run_once(struct rloop *r, int max_wait_ms) {
+    if (r->is_main) rt_runloop_drain_main_queue();
+    rl_run_items(r);
     double now = now_ref(), next = 1e18;
     for (;;) {
         id due = NULL;
-        pthread_mutex_lock(&timer_lock);
-        for (size_t i = 0; i < ntimers; i++) {
-            struct nstimer *t = (struct nstimer *)timers[i];
-            if (!t->valid) { objc_release(timers[i]); timers[i] = timers[--ntimers]; i--; continue; }
-            if (t->fire <= now) { due = objc_retain(timers[i]); break; }
+        pthread_mutex_lock(&r->m);
+        for (size_t i = 0; i < r->ntimers; i++) {
+            struct nstimer *t = (struct nstimer *)r->timers[i];
+            if (!t->valid) { objc_release(r->timers[i]); r->timers[i] = r->timers[--r->ntimers]; i--; continue; }
+            if (t->fire <= now) { due = objc_retain(r->timers[i]); break; }
             if (t->fire < next) next = t->fire;
         }
-        pthread_mutex_unlock(&timer_lock);
+        pthread_mutex_unlock(&r->m);
         if (!due) break;
         struct nstimer *t = (struct nstimer *)due;
         void *pool = objc_autoreleasePoolPush();
@@ -489,26 +659,67 @@ int rt_runloop_run_once(int max_wait_ms) {
     }
     int wait = max_wait_ms;
     if (next < 1e17) { int ms = (int)((next - now) * 1000.0); if (ms < 0) ms = 0; if (ms < wait) wait = ms; }
-    if (wait > 0 && !rt_main_queue_pending()) rt_main_queue_wait(wait);
-    rt_runloop_drain_main_queue();
+    if (r->is_main) {
+        if (wait > 0 && !rt_main_queue_pending()) rt_main_queue_wait(wait);
+        rt_runloop_drain_main_queue();
+    } else if (wait > 0) {
+        pthread_mutex_lock(&r->m);
+        if (!r->head && !r->stop) {
+            struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += (long)wait * 1000000L; ts.tv_sec += ts.tv_nsec / 1000000000L; ts.tv_nsec %= 1000000000L;
+            pthread_cond_timedwait(&r->c, &r->m, &ts);
+        }
+        pthread_mutex_unlock(&r->m);
+    }
+    rl_run_items(r);
     return next < 1e17 ? (int)((next - now_ref()) * 1000.0) : -1;
 }
-int rt_runloop_has_sources(void) { pthread_mutex_lock(&timer_lock); size_t n = ntimers; pthread_mutex_unlock(&timer_lock); return n > 0 || rt_main_queue_pending(); }
-void rt_runloop_stop(void) { runloop_stop = 1; }
+int rt_runloop_run_once(int max_wait_ms) { return rl_run_once(main_rl(), max_wait_ms); }
+int rt_runloop_has_sources(void) { return rl_has_sources(main_rl()); }
+void rt_runloop_stop(void) { runloop_stop = 1; main_rl()->stop = 1; }
 extern volatile int rt_quit_requested;
-static void runloop_until(double until) {
-    runloop_stop = 0;
-    while (!runloop_stop && !rt_quit_requested && now_ref() < until) {
-        int ms = (int)((until - now_ref()) * 1000.0); if (ms > 50) ms = 50; if (ms < 0) ms = 0;
-        rt_runloop_run_once(ms);
+/* returns 1 if stopped/timed out, 0 if the loop ran out of sources */
+static int runloop_until(struct rloop *r, double until) {
+    r->stop = 0; if (r->is_main) runloop_stop = 0;
+    while (!r->stop && !(r->is_main && runloop_stop) && !rt_quit_requested && now_ref() < until) {
+        if (!r->is_main && !rl_has_sources(r)) return 0;
+        double left = (until - now_ref()) * 1000.0;
+        int ms = left > 50 ? 50 : left < 0 ? 0 : (int)left;
+        rl_run_once(r, ms);
     }
+    return 1;
 }
-static id g_runloop;
-static id rl_current(Class c, SEL s) { (void)s; return singleton(c, &g_runloop); }
-static void rl_run(id self, SEL s) { (void)self; (void)s; runloop_until(1e18); }
-static void rl_runUntilDate(id self, SEL s, id date) { (void)self; (void)s; runloop_until(date ? ((struct nsdate *)date)->t : now_ref()); }
-static rt_bool rl_runModeBeforeDate(id self, SEL s, id mode, id date) { (void)self; (void)s; (void)mode; rt_runloop_run_once(date ? (int)((((struct nsdate *)date)->t - now_ref()) * 1000) : 0); return 1; }
-static void rl_addTimer(id self, SEL s, id t, id mode) { (void)self; (void)s; (void)mode; add_timer(t); }
+static id rl_current(Class c, SEL s) { (void)c; (void)s; return (id)rl_current_loop(); }
+static id rl_main(Class c, SEL s) { (void)c; (void)s; return (id)main_rl(); }
+static void rl_run(id self, SEL s) { (void)s; runloop_until((struct rloop *)self, 1e18); }
+static void rl_runUntilDate(id self, SEL s, id date) { (void)s; runloop_until((struct rloop *)self, date ? ((struct nsdate *)date)->t : now_ref()); }
+static rt_bool rl_runModeBeforeDate(id self, SEL s, id mode, id date) {
+    (void)s; (void)mode; struct rloop *r = (struct rloop *)self;
+    double left = date ? (((struct nsdate *)date)->t - now_ref()) * 1000.0 : 0;
+    int ms = left > 1000 ? 1000 : left < 0 ? 0 : (int)left;
+    if (!r->is_main && !rl_has_sources(r)) {
+        /* nothing attached: iOS returns NO at once; nap briefly so polling loops don't spin */
+        pthread_mutex_lock(&r->m);
+        if (!r->head && ms > 0) {
+            struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += 5000000L; ts.tv_sec += ts.tv_nsec / 1000000000L; ts.tv_nsec %= 1000000000L;
+            pthread_cond_timedwait(&r->c, &r->m, &ts);
+        }
+        pthread_mutex_unlock(&r->m);
+        return rl_run_items(r) > 0;
+    }
+    rl_run_once(r, ms);
+    return 1;
+}
+static void rl_addTimer(id self, SEL s, id t, id mode) { (void)s; (void)mode; rl_add_timer((struct rloop *)self, t); }
+static void rl_addPort(id self, SEL s, id port, id mode) { (void)s; (void)port; (void)mode; struct rloop *r = (struct rloop *)self; pthread_mutex_lock(&r->m); r->ports++; pthread_mutex_unlock(&r->m); }
+static void rl_removePort(id self, SEL s, id port, id mode) { (void)s; (void)port; (void)mode; struct rloop *r = (struct rloop *)self; pthread_mutex_lock(&r->m); if (r->ports > 0) r->ports--; pthread_mutex_unlock(&r->m); }
+static void rl_performBlock(id self, SEL s, void *blk) { (void)s; rl_post((struct rloop *)self, NULL, NULL, NULL, blk, NULL); }
+static void rl_performBlockModes(id self, SEL s, id modes, void *blk) { (void)modes; rl_performBlock(self, s, blk); }
+static void rl_performSel(id self, SEL s, SEL sel, id target, id arg, unsigned long order, id modes) { (void)s; (void)order; (void)modes; rl_post((struct rloop *)self, target, sel, arg, NULL, NULL); }
+static id rl_self(id self, SEL s) { (void)s; return self; }
+static id rl_currentMode(id self, SEL s) { (void)self; (void)s; extern id iosrt_NSDefaultRunLoopMode; return iosrt_NSDefaultRunLoopMode; }
+static void rl_noop_dealloc(id self, SEL s) { (void)self; (void)s; /* loops live for the process */ }
 
 /* ============================================================ NSUserDefaults */
 struct nsdefaults { Class isa; id dict; };
@@ -677,12 +888,19 @@ const void *iosrt_CFStringCreateWithFormatAndArguments(const void *alloc, const 
 long iosrt_CFArrayGetCount(const void *a) { return a ? RT_SEND0(long, (id)a, "count") : 0; }
 const void *iosrt_CFArrayGetValueAtIndex(const void *a, long i) { return RT_SEND1(id, (id)a, "objectAtIndex:", unsigned long, (unsigned long)i); }
 const void *iosrt_CFDictionaryGetValue(const void *d, const void *k) { return rt_dict_get((id)d, (id)k); }
-static int dummy_runloop;
-void *iosrt_CFRunLoopGetMain(void) { return &dummy_runloop; }
-void *iosrt_CFRunLoopGetCurrent(void) { return &dummy_runloop; }
-void iosrt_CFRunLoopRun(void) { runloop_until(1e18); }
-void iosrt_CFRunLoopStop(void *rl) { (void)rl; runloop_stop = 1; }
-int32_t iosrt_CFRunLoopRunInMode(id mode, double seconds, long ret) { (void)mode; (void)ret; runloop_until(now_ref() + seconds); return 3; }
+void *iosrt_CFRunLoopGetMain(void) { return main_rl(); }
+void *iosrt_CFRunLoopGetCurrent(void) { return rl_current_loop(); }
+void iosrt_CFRunLoopRun(void) { runloop_until(rl_current_loop(), 1e18); }
+void iosrt_CFRunLoopStop(void *rl) { struct rloop *r = rl ? rl : main_rl(); r->stop = 1; if (r->is_main) runloop_stop = 1; rl_wake(r); }
+void iosrt_CFRunLoopWakeUp(void *rl) { if (rl) rl_wake(rl); }
+void iosrt_CFRunLoopPerformBlock(void *rl, id mode, void *blk) { (void)mode; rl_post(rl ? rl : main_rl(), NULL, NULL, NULL, blk, NULL); }
+/* kCFRunLoopRunFinished = 1, Stopped = 2, TimedOut = 3, HandledSource = 4 */
+int32_t iosrt_CFRunLoopRunInMode(id mode, double seconds, long ret) {
+    (void)mode; struct rloop *r = rl_current_loop();
+    if (!r->is_main && !rl_has_sources(r)) return 1;
+    if (ret & 0xff) { int ms = seconds * 1000 > 1000 ? 1000 : (int)(seconds * 1000); rl_run_once(r, ms < 0 ? 0 : ms); return 4; }
+    return runloop_until(r, now_ref() + seconds) ? (r->stop ? 2 : 3) : 1;
+}
 void *iosrt_CFBundleGetMainBundle(void) { return b_main(RT_CLASS(NSBundle), NULL); }
 void *iosrt_kCFAllocatorDefault = NULL;
 void *iosrt_kCFAllocatorNull = NULL;
@@ -729,11 +947,11 @@ void rt_foundation_misc_init(void) {
 
     NEWCLASS(NSBundle, o, sizeof(struct nsbundle) - sizeof(void *));
     Class b = RT_CLASS(NSBundle);
-    CM(b, "mainBundle", b_main); IM(b, "bundlePath", b_bundlePath); IM(b, "resourcePath", b_resourcePath);
+    CM(b, "mainBundle", b_main); CM(b, "bundleForClass:", b_forClass); IM(b, "bundlePath", b_bundlePath); IM(b, "resourcePath", b_resourcePath);
     IM(b, "executablePath", b_executablePath);
     IM(b, "infoDictionary", b_info); IM(b, "objectForInfoDictionaryKey:", b_infoKey); IM(b, "bundleIdentifier", b_ident);
     IM(b, "pathForResource:ofType:", b_pathForResource); IM(b, "pathForResource:ofType:inDirectory:", b_pathForResourceDir);
-    IM(b, "URLForResource:withExtension:", b_URLForResource);
+    IM(b, "URLForResource:withExtension:", b_URLForResource); IM(b, "bundleURL", b_bundleURL); IM(b, "resourceURL", b_bundleURL);
     IM(b, "localizedStringForKey:value:table:", b_localized);
 
     NEWCLASS(NSException, o, sizeof(struct nsexc) - sizeof(void *));
@@ -743,11 +961,23 @@ void rt_foundation_misc_init(void) {
     IM(ex, "initWithName:reason:userInfo:", ex_initWithName); IM(ex, "raise", ex_raise);
     IM(ex, "name", ex_name); IM(ex, "reason", ex_reason); IM(ex, "userInfo", ex_userInfo); IM(ex, "description", ex_reason);
 
-    NEWCLASS(NSThread, o, 0);
+    NEWCLASS(NSThread, o, sizeof(struct nsthread) - sizeof(void *));
     Class th = RT_CLASS(NSThread);
     CM(th, "isMainThread", th_isMain); IM(th, "isMainThread", th_iisMain); CM(th, "currentThread", th_current);
-    CM(th, "mainThread", th_main); CM(th, "sleepForTimeInterval:", th_sleep);
-    CM(th, "detachNewThreadSelector:toTarget:withObject:", th_detach);
+    CM(th, "mainThread", th_main); CM(th, "sleepForTimeInterval:", th_sleep); CM(th, "sleepUntilDate:", th_sleepUntil);
+    CM(th, "detachNewThreadSelector:toTarget:withObject:", th_detach); CM(th, "detachNewThreadWithBlock:", th_detachBlock);
+    CM(th, "setThreadPriority:", th_csetPrio); CM(th, "exit", th_exit);
+    IM(th, "initWithTarget:selector:object:", th_initTarget); IM(th, "initWithBlock:", th_initBlock);
+    IM(th, "main", th_mainMethod); IM(th, "start", th_start); IM(th, "cancel", th_cancel);
+    IM(th, "isCancelled", th_isCancelled); IM(th, "isExecuting", th_isExecuting); IM(th, "isFinished", th_isFinished);
+    IM(th, "name", th_name); IM(th, "setName:", th_setName); IM(th, "threadPriority", th_prio); IM(th, "setThreadPriority:", th_setPrio);
+    IM(th, "setStackSize:", th_noopL); IM(th, "setQualityOfService:", th_noopL); IM(th, "threadDictionary", th_dict);
+    IM(o, "performSelectorOnMainThread:withObject:waitUntilDone:", o_performOnMain);
+    IM(o, "performSelector:onThread:withObject:waitUntilDone:", o_performOnThread);
+    IM(o, "performSelector:onThread:withObject:waitUntilDone:modes:", o_performOnThreadModes);
+    IM(o, "performSelectorInBackground:withObject:", o_performInBackground);
+    CM(o, "cancelPreviousPerformRequestsWithTarget:", cancel_perform1);
+    CM(o, "cancelPreviousPerformRequestsWithTarget:selector:object:", cancel_perform3);
 
     NEWCLASS(NSTimer, o, sizeof(struct nstimer) - sizeof(void *));
     Class tm = RT_CLASS(NSTimer);
@@ -755,13 +985,18 @@ void rt_foundation_misc_init(void) {
     CM(tm, "scheduledTimerWithTimeInterval:repeats:block:", tm_scheduledBlock);
     CM(tm, "timerWithTimeInterval:target:selector:userInfo:repeats:", tm_timer);
     IM(tm, "invalidate", tm_invalidate); IM(tm, "isValid", tm_isValid); IM(tm, "userInfo", tm_userInfo);
-    IM(tm, "fire", tm_fire); IM(tm, "dealloc", tm_dealloc);
+    IM(tm, "fire", tm_fire); IM(tm, "dealloc", tm_dealloc); IM(tm, "timeInterval", tm_interval);
+    CM(tm, "timerWithTimeInterval:repeats:block:", tm_timerBlock);
 
-    NEWCLASS(NSRunLoop, o, 0);
+    NEWCLASS(NSRunLoop, o, sizeof(struct rloop) - sizeof(void *));
     Class rl = RT_CLASS(NSRunLoop);
-    CM(rl, "currentRunLoop", rl_current); CM(rl, "mainRunLoop", rl_current);
+    CM(rl, "currentRunLoop", rl_current); CM(rl, "mainRunLoop", rl_main);
     IM(rl, "run", rl_run); IM(rl, "runUntilDate:", rl_runUntilDate); IM(rl, "runMode:beforeDate:", rl_runModeBeforeDate);
-    IM(rl, "addTimer:forMode:", rl_addTimer);
+    IM(rl, "addTimer:forMode:", rl_addTimer); IM(rl, "addPort:forMode:", rl_addPort); IM(rl, "removePort:forMode:", rl_removePort);
+    IM(rl, "performBlock:", rl_performBlock); IM(rl, "performInModes:block:", rl_performBlockModes);
+    IM(rl, "performSelector:target:argument:order:modes:", rl_performSel);
+    IM(rl, "getCFRunLoop", rl_self); IM(rl, "currentMode", rl_currentMode);
+    IM(rl, "dealloc", rl_noop_dealloc);
 
     NEWCLASS(NSUserDefaults, o, sizeof(id));
     Class ud = RT_CLASS(NSUserDefaults);

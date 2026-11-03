@@ -8,5 +8,11 @@
 @property (readonly) double sampleRate;
 @property (readonly) NSTimeInterval IOBufferDuration;
 @end
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern NSString *const AVAudioSessionCategoryPlayback;
 extern NSString *const AVAudioSessionCategoryPlayAndRecord;
+#ifdef __cplusplus
+}
+#endif

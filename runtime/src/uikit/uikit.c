@@ -35,6 +35,7 @@ RT_DEFINE_CLASS(UIColor);
 RT_DEFINE_CLASS(UIFont);
 RT_DEFINE_CLASS(UITouch);
 RT_DEFINE_CLASS(UIEvent);
+RT_DEFINE_CLASS(UIUserNotificationSettings);
 
 id rt_set_new(id *objs, size_t n);
 int rt_runloop_run_once(int max_wait_ms);
@@ -374,6 +375,7 @@ static long app_orientation(id self, SEL s) { (void)self; (void)s; return 1; }
 static rt_bool app_openURL(id self, SEL s, id url) { (void)self; (void)s; (void)url; return 0; }
 static void app_setIdle(id self, SEL s, long v) { (void)s; ((struct uiapp *)self)->idle = v; }
 static void app_setNetworkIndicator(id self, SEL s, long v) { (void)self; (void)s; (void)v; }
+static long app_zero(id self, SEL s) { (void)self; (void)s; return 0; }
 
 /* ------------------------------------------------------------ UITouch */
 static CGPoint t_locationInView(id self, SEL s, id view) {
@@ -385,6 +387,8 @@ static id t_view(id self, SEL s) { (void)s; return ((struct uitouch *)self)->vie
 static long t_phase(id self, SEL s) { (void)s; return ((struct uitouch *)self)->phase; }
 static long t_tapCount(id self, SEL s) { (void)self; (void)s; return 1; }
 static double t_timestamp(id self, SEL s) { (void)s; return ((struct uitouch *)self)->ts; }
+
+static id uns_make(Class c, SEL s, unsigned long t, id cats) { (void)s; (void)t; (void)cats; return objc_autorelease(rt_alloc_instance(c, 0)); }
 
 /* ================================================================ CoreGraphics */
 struct cgctx { float ox, oy; float fill[4], stroke[4]; float lw; float px, py; struct rt_display_list *dl; struct { float x0, y0, x1, y1; } seg[256]; int nseg; };
@@ -670,6 +674,10 @@ void rt_uikit_init(void) {
     IM(ap, "setStatusBarHidden:", app_setNetworkIndicator); IM(ap, "setStatusBarHidden:withAnimation:", v_noop2);
     IM(ap, "registerForRemoteNotifications", v_noop); IM(ap, "beginReceivingRemoteControlEvents", v_noop);
     IM(ap, "endReceivingRemoteControlEvents", v_noop);
+    IM(ap, "applicationIconBadgeNumber", app_zero); IM(ap, "setApplicationIconBadgeNumber:", v_setNoopL);
+    IM(ap, "isIgnoringInteractionEvents", app_zero); IM(ap, "beginIgnoringInteractionEvents", v_noop); IM(ap, "endIgnoringInteractionEvents", v_noop);
+    IM(ap, "registerUserNotificationSettings:", v_noop1); IM(ap, "setMinimumBackgroundFetchInterval:", v_setNoopL);
+    IM(ap, "isRegisteredForRemoteNotifications", app_zero); IM(ap, "backgroundTimeRemaining", app_zero);
 
     NEWCLASS(UIScreen, o, 0);
     CM(RT_CLASS(UIScreen), "mainScreen", sc_main); IM(RT_CLASS(UIScreen), "bounds", sc_bounds);
@@ -757,6 +765,8 @@ void rt_uikit_init(void) {
     IM(t, "locationInView:", t_locationInView); IM(t, "view", t_view); IM(t, "phase", t_phase);
     IM(t, "tapCount", t_tapCount); IM(t, "timestamp", t_timestamp);
     NEWCLASS(UIEvent, o, 0);
+    NEWCLASS(UIUserNotificationSettings, o, 0);
+    CM(RT_CLASS(UIUserNotificationSettings), "settingsForTypes:categories:", uns_make);
 
     iosrt_UIApplicationDidFinishLaunchingNotification = rt_str_new("UIApplicationDidFinishLaunchingNotification");
     iosrt_UIApplicationDidBecomeActiveNotification = rt_str_new("UIApplicationDidBecomeActiveNotification");

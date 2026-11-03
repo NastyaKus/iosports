@@ -6,6 +6,7 @@ defdir = pathlib.Path(sys.argv[1]); sdk = pathlib.Path(sys.argv[2])
 INSTALL = {
     "libSystem": "/usr/lib/libSystem.B.dylib",
     "libobjc": "/usr/lib/libobjc.A.dylib",
+    "libc++": "/usr/lib/libc++.1.dylib",
 }
 def install_name(lib):
     return INSTALL.get(lib, f"/System/Library/Frameworks/{lib}.framework/{lib}")
@@ -16,7 +17,7 @@ def tbd_path(lib):
 libs = {}
 for f in sorted(defdir.glob("*.def")):
     for line in f.read_text().splitlines():
-        m = re.match(r"\s*SYM\(\s*(\w+)\s*,\s*([\w$]+)\s*,", line)
+        m = re.match(r"\s*SYM\(\s*([\w+]+)\s*,\s*([\w$]+)\s*,", line)
         if m:
             libs.setdefault(m.group(1), {"syms": set(), "classes": set()})["syms"].add(m.group(2)); continue
         m = re.match(r"\s*CLASS\(\s*(\w+)\s*,\s*(\w+)\s*\)", line)

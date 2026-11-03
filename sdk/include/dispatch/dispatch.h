@@ -1,5 +1,8 @@
 #pragma once
 #include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef struct dispatch_queue_s *dispatch_queue_t;
 typedef struct dispatch_semaphore_s *dispatch_semaphore_t;
 typedef uint64_t dispatch_time_t;
@@ -23,3 +26,6 @@ dispatch_semaphore_t dispatch_semaphore_create(long);
 long dispatch_semaphore_signal(dispatch_semaphore_t);
 long dispatch_semaphore_wait(dispatch_semaphore_t, dispatch_time_t);
 void dispatch_main(void) __attribute__((noreturn));
+#ifdef __cplusplus
+}
+#endif

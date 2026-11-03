@@ -35,11 +35,12 @@ static int arr_is_ours(id a) {
 }
 size_t rt_array_count(id a) { return a ? ((struct nsarr *)a)->n : 0; }
 id rt_array_at(id a, size_t i) { return a && i < ((struct nsarr *)a)->n ? ((struct nsarr *)a)->items[i] : NULL; }
-static _Noreturn void range_error(const char *m, unsigned long i, size_t n) {
+void rt_soft_error(const char *msg);
+static void range_error(const char *m, unsigned long i, size_t n) {
     char b[256];
     if (n) snprintf(b, sizeof b, "*** -[%s]: index %lu beyond bounds [0 .. %zu]", m, i, n - 1);
     else snprintf(b, sizeof b, "*** -[%s]: index %lu beyond bounds for empty array", m, i);
-    rt_guest_exit(73, b);
+    rt_soft_error(b);
 }
 
 /* ------------------------------------------------------------ NSArray */
@@ -48,10 +49,9 @@ static id a_alloc_with(Class c, id *objs, size_t n) {
     struct nsarr *a = (struct nsarr *)r;
     arr_reserve(a, n);
     for (size_t i = 0; i < n; i++) {
-        if (!objs[i]) { rt_guest_exit(73, "*** -[__NSPlaceholderArray initWithObjects:count:]: attempt to insert nil object"); }
-        a->items[i] = objc_retain(objs[i]);
+        if (!objs[i]) { rt_soft_error("*** -[__NSPlaceholderArray initWithObjects:count:]: attempt to insert nil object"); continue; }
+        a->items[a->n++] = objc_retain(objs[i]);
     }
-    a->n = n;
     for (Class k = c; k; k = k->superclass) if (k == RT_CLASS(NSMutableArray) || k == RT_CLASS(NSMutableSet)) { a->mut = 1; break; }
     return r;
 }
@@ -87,7 +87,7 @@ static void a_dealloc(id self, SEL s) {
 static unsigned long a_count(id self, SEL s) { (void)s; return ((struct nsarr *)self)->n; }
 static id a_objectAtIndex(id self, SEL s, unsigned long i) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
-    if (i >= a->n) range_error("NSArray objectAtIndex:", i, a->n);
+    if (i >= a->n) { range_error("NSArray objectAtIndex:", i, a->n); return NULL; }
     return a->items[i];
 }
 static id a_first(id self, SEL s) { (void)s; struct nsarr *a = (struct nsarr *)self; return a->n ? a->items[0] : NULL; }
@@ -226,7 +226,7 @@ static rt_bool a_isEqual(id self, SEL s, id o) {
 static unsigned long a_hash(id self, SEL s) { (void)s; return ((struct nsarr *)self)->n; }
 static id a_subarray(id self, SEL s, NSRange r) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
-    if (r.location + r.length > a->n) range_error("NSArray subarrayWithRange:", r.location + r.length, a->n);
+    if (r.location + r.length > a->n) { range_error("NSArray subarrayWithRange:", r.location + r.length, a->n); return objc_autorelease(a_alloc_with(RT_CLASS(NSArray), NULL, 0)); }
     return objc_autorelease(a_alloc_with(RT_CLASS(NSArray), a->items + r.location, r.length));
 }
 static void a_makeObjectsPerform(id self, SEL s, SEL q) { (void)s; struct nsarr *a = (struct nsarr *)self; for (size_t i = 0; i < a->n; i++) ((void (*)(id, SEL))objc_msgSend)(a->items[i], q); }
@@ -240,20 +240,20 @@ static id a_valueForKey(id self, SEL s, id key) {
 static id ma_withCapacity(Class c, SEL s, unsigned long n) { (void)s; id r = a_alloc_with(c, NULL, 0); arr_reserve((struct nsarr *)r, n); return objc_autorelease(r); }
 static id ma_initWithCapacity(id self, SEL s, unsigned long n) { (void)s; ((struct nsarr *)self)->mut = 1; arr_reserve((struct nsarr *)self, n); return self; }
 static void ma_add(id self, SEL s, id o) {
-    (void)s; if (!o) rt_guest_exit(73, "*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
+    (void)s; if (!o) { rt_soft_error("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil"); return; }
     arr_push((struct nsarr *)self, o);
 }
 static void ma_insert(id self, SEL s, id o, unsigned long i) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
-    if (!o) rt_guest_exit(73, "*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
-    if (i > a->n) range_error("__NSArrayM insertObject:atIndex:", i, a->n);
+    if (!o) { rt_soft_error("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil"); return; }
+    if (i > a->n) { range_error("__NSArrayM insertObject:atIndex:", i, a->n); return; }
     arr_reserve(a, a->n + 1);
     memmove(a->items + i + 1, a->items + i, (a->n - i) * sizeof(id));
     a->items[i] = objc_retain(o); a->n++; a->mutations++;
 }
 static void ma_removeAt(id self, SEL s, unsigned long i) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
-    if (i >= a->n) range_error("__NSArrayM removeObjectAtIndex:", i, a->n);
+    if (i >= a->n) { range_error("__NSArrayM removeObjectAtIndex:", i, a->n); return; }
     id o = a->items[i];
     memmove(a->items + i, a->items + i + 1, (a->n - i - 1) * sizeof(id));
     a->n--; a->mutations++;
@@ -274,7 +274,7 @@ static void ma_removeAll(id self, SEL s) {
 }
 static void ma_replace(id self, SEL s, unsigned long i, id o) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
-    if (i >= a->n) range_error("__NSArrayM replaceObjectAtIndex:withObject:", i, a->n);
+    if (i >= a->n) { range_error("__NSArrayM replaceObjectAtIndex:withObject:", i, a->n); return; }
     id old = a->items[i]; a->items[i] = objc_retain(o); a->mutations++; objc_release(old);
 }
 static void ma_setAtIndexed(id self, SEL s, id o, unsigned long i) {
@@ -321,7 +321,7 @@ static long dict_find(struct nsdict *d, id key) {
     return -1;
 }
 static void dict_set(struct nsdict *d, id key, id val) {
-    if (!key || !val) rt_guest_exit(73, "*** -[NSMutableDictionary setObject:forKey:]: key or object cannot be nil");
+    if (!key || !val) { rt_soft_error("*** -[NSMutableDictionary setObject:forKey:]: key or object cannot be nil"); return; }
     long i = dict_find(d, key);
     objc_retain(val);
     if (i >= 0) { id old = d->vals[i]; d->vals[i] = val; objc_release(old); d->mutations++; return; }

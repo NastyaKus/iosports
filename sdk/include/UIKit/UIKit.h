@@ -111,8 +111,14 @@ typedef NS_ENUM(NSInteger, UIButtonType) { UIButtonTypeCustom = 0, UIButtonTypeS
 @property (readonly) UIWindow *keyWindow;
 @property (nonatomic, getter=isIdleTimerDisabled) BOOL idleTimerDisabled;
 @end
+#ifdef __cplusplus
+extern "C" {
+#endif
 int UIApplicationMain(int argc, char *argv[], NSString *principal, NSString *delegate);
 CGContextRef UIGraphicsGetCurrentContext(void);
 void UIRectFill(CGRect r);
 NSString *NSStringFromCGRect(CGRect r);
 NSString *NSStringFromCGPoint(CGPoint p);
+#ifdef __cplusplus
+}
+#endif

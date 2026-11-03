@@ -8,7 +8,9 @@ chained=""
 if [ "${1:-}" = "--chained" ]; then chained="-fixup_chains"; shift; fi
 LD=${LD64:-/usr/lib/llvm-18/bin/ld64.lld}
 tmp=$(mktemp -d)
-objs=""; fw=""
+objs=""; fw=""; cxx=""
+NDK=${ANDROID_NDK:-/opt/android-sdk/ndk/27.2.12479018}
+CXXINC="-nostdinc++ -isystem $sdk/../runtime/src/cxx/include -isystem $NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
 while [ $# -gt 0 ]; do
   case $1 in
     -framework) fw="$fw -framework $2"; shift 2 ;;
@@ -17,9 +19,14 @@ while [ $# -gt 0 ]; do
       clang -target arm64-apple-ios$ver -nostdlibinc -isystem "$sdk/include" \
             -fobjc-arc -fblocks -fobjc-runtime=ios-$ver -O1 -g0 -Wall -c "$1" -o "$o"
       objs="$objs $o"; shift ;;
+    *.mm|*.cpp|*.cc)
+      o="$tmp/$(basename "$1").o"
+      clang++ -target arm64-apple-ios$ver -std=c++17 $CXXINC -nostdlibinc -isystem "$sdk/include" \
+            -fobjc-arc -fblocks -fobjc-runtime=ios-$ver -fno-exceptions -O1 -g0 -Wall -c "$1" -o "$o"
+      objs="$objs $o"; cxx="-lc++"; shift ;;
     *) echo "unknown arg $1" >&2; exit 2 ;;
   esac
 done
 $LD -arch arm64 -platform_version ios $ver $ver -syslibroot "$sdk" -F"$sdk/System/Library/Frameworks" \
-    -L"$sdk/usr/lib" -lSystem -lobjc -framework CoreFoundation $fw $chained $objs -o "$out"
+    -L"$sdk/usr/lib" -lSystem -lobjc $cxx -framework CoreFoundation $fw $chained $objs -o "$out"
 rm -rf "$tmp"

@@ -16,6 +16,10 @@
 #include <sys/mman.h>
 #include <sys/time.h>
 #include <sched.h>
+#include <poll.h>
+#ifdef IOSRT_WITH_ZLIB
+#include <zlib.h>
+#endif
 
 /* This TU deliberately does not include internal.h: every runtime symbol is
  * declared opaquely (extern char x[]) by the generated decls.h. */
@@ -30,6 +34,10 @@ struct iosrt_export { const char *lib; const char *name; void *addr; };
 #include "foundation.def"
 #include "uikit.def"
 #include "audio.def"
+#ifdef IOSRT_WITH_CXX
+#include "cxx.def"
+#include "cxx_gen.def"
+#endif
 #undef SYM
 #undef CLASS
 
@@ -42,6 +50,10 @@ static struct iosrt_export table[] = {
 #include "foundation.def"
 #include "uikit.def"
 #include "audio.def"
+#ifdef IOSRT_WITH_CXX
+#include "cxx.def"
+#include "cxx_gen.def"
+#endif
 #undef SYM
 #undef CLASS
 };
