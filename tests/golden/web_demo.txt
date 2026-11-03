@@ -1,0 +1,26 @@
+index found: 1, scroll view is subviews[0]: 1
+should start index.html (type 5) -> YES
+did start
+did finish: title 'Web Demo & Co', content height > 0: 1, can go back: 0
+should start blocked://nope (type 0) -> NO
+should start app://action (type 0) -> YES
+did start
+did fail: WebKitErrorDomain 101, can go back: 0
+should start page2.html (type 0) -> YES
+did start
+did finish: title 'Second', content height > 0: 1, can go back: 1
+going back
+should start index.html (type 2) -> YES
+did start
+did finish: title 'Web Demo & Co', content height > 0: 1, can go back: 0
+screen 375x667
+rect 0,0 375x667 rgba(255,255,255,1.00)
+text 8,29.44 107x38 rgba(51,51,51,1.00) size=30 align=0 "INDEX"
+text 8,88.88 158x30 rgba(0,90,200,1.00) size=24 align=0 "Second page"
+text 8,134.88 147x30 rgba(0,90,200,1.00) size=24 align=0 "Blocked link"
+text 8,180.88 151x30 rgba(0,90,200,1.00) size=24 align=0 "App scheme"
+text 8,226.88 248x20 rgba(51,51,51,1.00) size=16 align=0 "Plain paragraph with an image"
+image 260,230.88 16x16 px=8x8
+text 282,226.88 33x20 rgba(51,51,51,1.00) size=16 align=0 "and"
+text 8,246.88 144x20 rgba(51,51,51,1.00) size=16 align=0 "entities: café → ✓"
+text 8,282.88 58x10 rgba(51,51,51,1.00) size=8 align=0 "tiny legal text"

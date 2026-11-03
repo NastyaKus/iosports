@@ -264,6 +264,29 @@ UIKIT_EXTERN const CGFloat UITableViewAutomaticDimension;
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic) BOOL clearsSelectionOnViewWillAppear;
 @end
+typedef NS_ENUM(NSInteger, UIWebViewNavigationType) { UIWebViewNavigationTypeLinkClicked = 0, UIWebViewNavigationTypeFormSubmitted, UIWebViewNavigationTypeBackForward,
+    UIWebViewNavigationTypeReload, UIWebViewNavigationTypeFormResubmitted, UIWebViewNavigationTypeOther };
+@class UIWebView;
+@protocol UIWebViewDelegate <NSObject>
+@optional
+- (BOOL)webView:(UIWebView *)webView shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(UIWebViewNavigationType)type;
+- (void)webViewDidStartLoad:(UIWebView *)webView;
+- (void)webViewDidFinishLoad:(UIWebView *)webView;
+- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error;
+@end
+@interface UIWebView : UIView
+@property (nonatomic, weak) id<UIWebViewDelegate> delegate;
+@property (readonly, strong) UIScrollView *scrollView;
+@property (readonly, strong) NSURLRequest *request;
+@property (readonly, getter=canGoBack) BOOL canGoBack;
+@property (readonly, getter=isLoading) BOOL loading;
+@property (nonatomic) BOOL scalesPageToFit;
+- (void)loadRequest:(NSURLRequest *)request;
+- (void)loadHTMLString:(NSString *)html baseURL:(NSURL *)base;
+- (void)goBack;
+- (void)reload;
+- (NSString *)stringByEvaluatingJavaScriptFromString:(NSString *)js;
+@end
 @interface UIAlertAction : NSObject
 + (instancetype)actionWithTitle:(NSString *)t style:(UIAlertActionStyle)s handler:(void (^)(UIAlertAction *a))h;
 @property (readonly) NSString *title;

@@ -40,7 +40,11 @@ int rt_first_time(const char *key) {
 /* NSException-style programming errors: fatal in strict mode, logged in lenient mode */
 void rt_soft_error(const char *msg) {
     if (rt_is_strict()) rt_guest_exit(73, msg);
-    if (rt_first_time(msg)) rt_warn("error (ignored in lenient mode): %s", msg);
+    if (rt_first_time(msg)) {
+        rt_warn("error (ignored in lenient mode): %s", msg);
+        void rt_print_backtrace(void);
+        if (getenv("IOSRT_VERBOSE")) rt_print_backtrace();   /* where the guest went wrong */
+    }
 }
 long rt_missing_called(const char *name) {
     if (rt_is_strict()) {

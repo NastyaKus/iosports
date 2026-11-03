@@ -48,7 +48,6 @@ RT_DEFINE_CLASS(UIActivityViewController);
 RT_DEFINE_CLASS(UIPopoverController);
 RT_DEFINE_CLASS(UIDocumentInteractionController);
 RT_DEFINE_CLASS(UIImagePickerController);
-RT_DEFINE_CLASS(UIWebView);
 RT_DEFINE_CLASS(UIPickerView);
 RT_DEFINE_CLASS(UIDatePicker);
 RT_DEFINE_CLASS(UIAccessibilityElement);
@@ -69,7 +68,6 @@ static void nopL(id self, SEL s, long v) { (void)self; (void)s; (void)v; }
 static void nop1(id self, SEL s, id v) { (void)self; (void)s; (void)v; }
 static void nop1L(id self, SEL s, id v, long b) { (void)self; (void)s; (void)v; (void)b; }
 static id nil0(id self, SEL s) { (void)self; (void)s; return NULL; }
-static id self0(id self, SEL s) { (void)s; return self; }
 static rt_bool yes0(id self, SEL s) { (void)self; (void)s; return 1; }
 static rt_bool no0(id self, SEL s) { (void)self; (void)s; return 0; }
 static long zeroL(id self, SEL s) { (void)self; (void)s; return 0; }
@@ -1310,18 +1308,6 @@ static id doc_withURL(Class c, SEL s, id url) { (void)s; (void)url; return objc_
 static rt_bool doc_present(id self, SEL s, CGRect r, id v, long a) { (void)self; (void)s; (void)r; (void)v; (void)a; return 0; }
 static rt_bool ip_available(Class c, SEL s, long type) { (void)c; (void)s; return type == 0 ? 0 : 0; }
 static id ip_mediaTypes(Class c, SEL s, long type) { (void)c; (void)s; (void)type; return NULL; }
-/* web view */
-struct uiweb { struct uiview v; id delegate; };
-static void web_load(id self, SEL s, id req) {
-    (void)s; (void)req; id d = ((struct uiweb *)self)->delegate;
-    if (rt_first_time("UIWebView")) rt_log("UIWebView: web content is not supported (load fails)");
-    id err = RT_SEND3(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSURLErrorDomain"), long, -1009, id, NULL);
-    if (d && rt_responds(d, rt_sel("webView:didFailLoadWithError:"))) RT_SEND2(void, d, "webView:didFailLoadWithError:", id, self, id, err);
-}
-static void web_loadHTML(id self, SEL s, id html, id base) { (void)html; (void)base; web_load(self, s, NULL); }
-static void web_setDelegate(id self, SEL s, id d) { (void)s; ((struct uiweb *)self)->delegate = d; }
-static id web_delegate(id self, SEL s) { (void)s; return ((struct uiweb *)self)->delegate; }
-static id web_eval(id self, SEL s, id js) { (void)self; (void)s; (void)js; return rt_str(""); }
 /* pickers */
 struct uipicker { struct uiview v; id dataSource, delegate; long sel[8]; };
 static void pk_setDS(id self, SEL s, id d) { (void)s; ((struct uipicker *)self)->dataSource = d; }
@@ -1363,6 +1349,7 @@ void rt_controls2_draw(id view, struct cgctx *c, CGRect b) {
     else if (rt_is_kind_of(view, RT_CLASS(UIToolbar))) draw_toolbar(view, c, b);
     else if (rt_is_kind_of(view, RT_CLASS(UITableView))) draw_table(view, c, b);
     else if (rt_is_kind_of(view, RT_CLASS(UITableViewCell))) draw_cell(view, c, b);
+    else { void rt_webview_draw(id, struct cgctx *, CGRect); rt_webview_draw(view, c, b); }
 }
 
 void rt_controls2_init(void) {
@@ -1578,11 +1565,7 @@ void rt_controls2_init(void) {
     Class ipc = RT_CLASS(UIImagePickerController);
     CM(ipc, "isSourceTypeAvailable:", ip_available); CM(ipc, "availableMediaTypesForSourceType:", ip_mediaTypes);
     IM(ipc, "setSourceType:", nopL); IM(ipc, "setDelegate:", nop1); IM(ipc, "setMediaTypes:", nop1); IM(ipc, "setAllowsEditing:", nopL);
-    NEWCLASS(UIWebView, v, sizeof(struct uiweb) - sizeof(struct uiview));
-    Class web = RT_CLASS(UIWebView);
-    IM(web, "loadRequest:", web_load); IM(web, "loadHTMLString:baseURL:", web_loadHTML); IM(web, "setDelegate:", web_setDelegate);
-    IM(web, "delegate", web_delegate); IM(web, "stringByEvaluatingJavaScriptFromString:", web_eval); IM(web, "stopLoading", nop);
-    IM(web, "isLoading", no0); IM(web, "setScalesPageToFit:", nopL); IM(web, "scrollView", self0); IM(web, "reload", nop); IM(web, "goBack", nop);
+    void rt_webview_init(void); rt_webview_init();
     NEWCLASS(UIPickerView, v, sizeof(struct uipicker) - sizeof(struct uiview));
     Class pk = RT_CLASS(UIPickerView);
     IM(pk, "setDataSource:", pk_setDS); IM(pk, "setDelegate:", pk_setDelegate); IM(pk, "selectRow:inComponent:animated:", pk_select);
