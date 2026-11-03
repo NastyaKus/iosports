@@ -18,10 +18,38 @@ static pthread_mutex_t stub_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern char iosrt_trap_entry[];   /* asm: mov x0, x16 ; b rt_missing_called */
 
-_Noreturn void rt_missing_called(const char *name) {
-    char msg[512];
-    snprintf(msg, sizeof msg, "called unimplemented function %s", name);
-    rt_guest_exit(70, msg);
+/* Strict mode (default for the CLI/tests): calling a missing API ends the guest.
+ * Lenient mode (IOSRT_STRICT=0, default in the Android shell): the call is logged
+ * once and returns 0/nil, so apps can get past non-essential missing features. */
+static int g_strict = -1;
+int rt_is_strict(void) {
+    if (g_strict < 0) { const char *s = getenv("IOSRT_STRICT"); g_strict = !(s && s[0] == '0'); }
+    return g_strict;
+}
+void rt_set_strict(int on) { g_strict = on; }
+static pthread_mutex_t seen_lock = PTHREAD_MUTEX_INITIALIZER;
+static char **seen; static size_t nseen, capseen;
+int rt_first_time(const char *key) {
+    pthread_mutex_lock(&seen_lock);
+    for (size_t i = 0; i < nseen; i++) if (!strcmp(seen[i], key)) { pthread_mutex_unlock(&seen_lock); return 0; }
+    if (nseen == capseen) { capseen = capseen ? capseen * 2 : 64; seen = realloc(seen, capseen * sizeof *seen); }
+    seen[nseen++] = rt_xstrdup(key);
+    pthread_mutex_unlock(&seen_lock);
+    return 1;
+}
+/* NSException-style programming errors: fatal in strict mode, logged in lenient mode */
+void rt_soft_error(const char *msg) {
+    if (rt_is_strict()) rt_guest_exit(73, msg);
+    if (rt_first_time(msg)) rt_warn("error (ignored in lenient mode): %s", msg);
+}
+long rt_missing_called(const char *name) {
+    if (rt_is_strict()) {
+        char msg[512];
+        snprintf(msg, sizeof msg, "called unimplemented function %s", name);
+        rt_guest_exit(70, msg);
+    }
+    if (rt_first_time(name)) rt_warn("missing: %s (stub returns 0)", name);
+    return 0;
 }
 
 static void *make_trap(const char *name) {
@@ -67,20 +95,47 @@ static void note_missing(struct rt_image *img, const char *name, const char *lib
     m->name = rt_xstrdup(name); m->lib = rt_xstrdup(lib ? lib : "?"); m->count = 1; m->kind = kind;
 }
 
-/* Heuristic: is an unknown import a data symbol (constant, key, notification name...)? */
+/* Heuristic: is an unknown import a data symbol (constant, key, notification name...)?
+ * Misclassification is survivable: data stubs live in a non-executable region and the
+ * crash handler turns a call into one into "return 0" in lenient mode. */
 static int looks_like_data(const char *n) {
     if (!strncmp(n, "_OBJC_EHTYPE_$_", 15) || !strncmp(n, "_OBJC_IVAR_$_", 13)) return 1;
     if (!strncmp(n, "__kCF", 5) || !strncmp(n, "__NSConcrete", 12) || !strncmp(n, "__dispatch_", 11)) return 1;
+    static const char *verbs[] = { "Create", "Copy", "Get", "Set", "Add", "Remove", "Dispose", "Send", "Received", "Connect",
+                                   "Init", "Instantiate", "Is", "Begin", "End", "Draw", "Make", "Start", "Stop", "Open", "Close",
+                                   "Read", "Write", "Release", "Retain", "Register", "Schedule", "Perform", "Show", "Load", NULL };
+    for (int i = 0; verbs[i]; i++) {
+        const char *p = strstr(n + 1, verbs[i]);
+        if (p && (p == n + 1 || islower((unsigned char)p[-1]) || isupper((unsigned char)p[-1])) && !strstr(n, "Notification") && !strstr(n, "Key")) return 0;
+    }
     if (n[0] == '_' && n[1] == 'k' && isupper((unsigned char)n[2])) return 1;
     size_t L = strlen(n);
-    const char *suf[] = { "Notification", "Key", "Constant", "Identifier", "Name", "Type", "Mode", "Attribute",
-                          "Category", "Option", "Domain", "Exception", "Preset", "Port", "Keys", "Value", NULL };
+    const char *suf[] = { "Notification", "Key", "Keys", "Domain", "Exception", "AttributeName", "ServiceType", "Mode", "Category", NULL };
     for (int i = 0; suf[i]; i++) {
         size_t sl = strlen(suf[i]);
         if (L > sl && !strcmp(n + L - sl, suf[i])) return 1;
     }
-    if (!strncmp(n, "_UI", 3) && strstr(n, "Font")) return 1;
+    if (!strncmp(n, "_UIFontWeight", 13) || !strncmp(n, "_NSFoundationVersion", 20)) return 1;
     return 0;
+}
+
+/* data stubs: zeroed 256-byte blocks in one non-executable region */
+#define DATA_REGION (4u << 20)
+static uint8_t *data_region; static size_t data_used;
+static struct { uintptr_t a; const char *name; } *data_names; static size_t ndata_names, capdata_names;
+static void *make_data_stub(const char *name) {
+    if (!data_region) data_region = mmap(NULL, DATA_REGION, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (data_region == MAP_FAILED || data_used + 256 > DATA_REGION) return rt_xcalloc(1, 256);
+    void *p = data_region + data_used; data_used += 256;
+    if (ndata_names == capdata_names) { capdata_names = capdata_names ? capdata_names * 2 : 64; data_names = realloc(data_names, capdata_names * sizeof *data_names); }
+    data_names[ndata_names].a = (uintptr_t)p; data_names[ndata_names++].name = rt_xstrdup(name);
+    return p;
+}
+/* used by the crash handler: was pc a call into a data stub? */
+const char *rt_data_stub_name(uintptr_t pc) {
+    if (!data_region || pc < (uintptr_t)data_region || pc >= (uintptr_t)data_region + data_used) return NULL;
+    for (size_t i = 0; i < ndata_names; i++) if (pc >= data_names[i].a && pc < data_names[i].a + 256) return data_names[i].name;
+    return "?";
 }
 
 static void *self_symbol(struct rt_image *img, const char *name) {
@@ -97,6 +152,7 @@ static void *self_symbol(struct rt_image *img, const char *name) {
 }
 
 void *rt_platform_dlsym_fallback(const char *name);
+int rt_bind_kind;
 
 void *rt_resolve_symbol(struct rt_image *img, const char *name, const char *lib, int weak_import) {
     if (!strcmp(lib, "self")) {
@@ -118,9 +174,13 @@ void *rt_resolve_symbol(struct rt_image *img, const char *name, const char *lib,
         note_missing(img, name, lib, 2);
         return img->dry_run ? (void *)0 : (void *)rt_missing_class(name + 18)->isa;
     }
-    if (looks_like_data(name)) {
+    /* lazily bound => called through a stub => function. Non-lazy (GOT) binds of unknown
+     * symbols become zeroed data stubs: reading them yields nil/0, and calling one is caught
+     * by the crash handler (lenient mode) and turned into "return 0". */
+    int as_data = rt_bind_kind == 2 ? 0 : rt_bind_kind == 1 ? 1 : looks_like_data(name);
+    if (as_data) {
         note_missing(img, name, lib, 1);
-        return img->dry_run ? NULL : rt_xcalloc(1, 256);
+        return img->dry_run ? NULL : make_data_stub(name);
     }
     note_missing(img, name, lib, 0);
     return img->dry_run ? NULL : make_trap(name);

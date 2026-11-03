@@ -583,6 +583,24 @@ static IMP lookup_send(Class cls, id self, SEL sel, id *self_slot) {
             return rt_lookup_for_send(other, sel);
         }
     }
+    /* full forwarding: the class overrides -forwardInvocation: */
+    {
+        extern char iosrt_msgForward[];
+        extern IMP rt_default_forward_imp;
+        int fi; IMP fwd = rt_lookup(meta ? cls : cls, rt_sel("forwardInvocation:"), &fi);
+        if (fi && fwd && fwd != rt_default_forward_imp && !meta) return (IMP)iosrt_msgForward;
+    }
+    {
+        int rt_is_strict(void);
+        int rt_first_time(const char *key);
+        extern char iosrt_nil_imp[];
+        if (!rt_is_strict()) {
+            char key[512];
+            snprintf(key, sizeof key, "%c[%s %s]", meta ? '+' : '-', rc->name, sel);
+            if (rt_first_time(key)) rt_warn("missing: %s unrecognized selector (returns nil)", key);
+            return (IMP)iosrt_nil_imp;
+        }
+    }
     return (IMP)unrecognized_imp;
 }
 
@@ -675,4 +693,26 @@ Class rt_find_class_with_suffix(const char *suffix) {
     }
     pthread_mutex_unlock(&rt_lock);
     return best;
+}
+
+/* Map a code address inside a guest image to the closest preceding ObjC method
+ * implementation: "-[Class selector]+offset". Used for crash reports of stripped apps. */
+const char *rt_objc_symbolize(uint64_t addr, uint64_t *off, char *buf, size_t n) {
+    uint64_t best = 0; const char *bc = NULL; SEL bs = NULL; int bmeta = 0;
+    for (uint32_t i = 0; i < clstab.cap; i++) {
+        if (!clstab.keys[i]) continue;
+        for (int m = 0; m < 2; m++) {
+            Class c = m ? clstab.vals[i]->isa : clstab.vals[i];
+            struct rt_class *rc = rt_cls(c);
+            if (!rc || !(rc->flags & RT_CLS_GUEST)) continue;
+            for (size_t k = 0; k < rc->nm; k++) {
+                uint64_t a = (uint64_t)(uintptr_t)rc->mlist[k]->imp;
+                if (a <= addr && a > best) { best = a; bc = rc->name; bs = rc->mlist[k]->name; bmeta = m; }
+            }
+        }
+    }
+    if (!bc || addr - best > 0x4000) return NULL;
+    snprintf(buf, n, "%c[%s %s]", bmeta ? '+' : '-', bc, bs);
+    if (off) *off = addr - best;
+    return buf;
 }

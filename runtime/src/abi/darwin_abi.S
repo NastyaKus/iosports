@@ -48,15 +48,44 @@ DVAR iosrt_imp_initWithObjects,            rt_NSArray_initWithObjects,          
 DVAR iosrt_imp_dictionaryWithObjectsAndKeys, rt_NSDictionary_dictionaryWithObjectsAndKeys, x3
 DVAR iosrt_imp_initWithObjectsAndKeys,     rt_NSDictionary_initWithObjectsAndKeys, x3
 DVAR iosrt_imp_exceptionRaiseFormat,       rt_NSException_raiseFormat,             x4
+DVAR iosrt_imp_setWithObjects,             rt_NSSet_setWithObjects,                x3
+DVAR iosrt_imp_setInitWithObjects,         rt_NSSet_initWithObjects,               x3
+DVAR iosrt_imp_handleFailureInMethod,      rt_NSAssertionHandler_handleFailure,    x7
+DVAR iosrt_imp_handleFailureInFunction,    rt_NSAssertionHandler_handleFailureFn,  x6
 
 /* ---------------------------------------------------------------- traps */
     .globl iosrt_trap_entry
     .type iosrt_trap_entry, %function
     .p2align 2
 iosrt_trap_entry:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
     mov x0, x16
-    b rt_missing_called
+    bl rt_missing_called          /* strict mode: does not return */
+    ldp x29, x30, [sp], #16
+    /* lenient mode: behave like a function returning 0 / nil / 0.0 */
+    mov x0, #0
+    mov x1, #0
+    movi d0, #0
+    movi d1, #0
+    movi d2, #0
+    movi d3, #0
+    ret
     .size iosrt_trap_entry, . - iosrt_trap_entry
+
+/* IMP used for unrecognized selectors in lenient mode: returns nil / 0 */
+    .globl iosrt_nil_imp
+    .type iosrt_nil_imp, %function
+    .p2align 2
+iosrt_nil_imp:
+    mov x0, #0
+    mov x1, #0
+    movi d0, #0
+    movi d1, #0
+    movi d2, #0
+    movi d3, #0
+    ret
+    .size iosrt_nil_imp, . - iosrt_nil_imp
 
 /* Darwin stack probe: x15 = size/16; must preserve all registers. */
     .globl iosrt_chkstk_darwin
@@ -176,5 +205,79 @@ iosrt_sincosf_stret:
     ldp x29, x30, [sp], #32
     ret
     .size iosrt_sincosf_stret, . - iosrt_sincosf_stret
+
+
+/* ------------------------------------------------- generic call / forward */
+/* struct rt_callframe { u64 x[9]; double d[8]; u64 *stack; u64 nstack; u64 rx[2]; double rd[4]; }
+ * offsets:          x:0       d:72         stack:136  nstack:144  rx:152    rd:168   (size 200) */
+    .globl iosrt_call
+    .type iosrt_call, %function
+    .p2align 2
+iosrt_call:                         /* x0 = fn, x1 = frame */
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x1
+    mov x20, x0
+    ldr x9, [x19, #144]
+    lsl x10, x9, #3
+    add x10, x10, #15
+    and x10, x10, #~15
+    sub sp, sp, x10
+    ldr x11, [x19, #136]
+    mov x12, #0
+1:  cmp x12, x9
+    b.ge 2f
+    ldr x13, [x11, x12, lsl #3]
+    str x13, [sp, x12, lsl #3]
+    add x12, x12, #1
+    b 1b
+2:  ldp d0, d1, [x19, #72]
+    ldp d2, d3, [x19, #88]
+    ldp d4, d5, [x19, #104]
+    ldp d6, d7, [x19, #120]
+    ldp x0, x1, [x19, #0]
+    ldp x2, x3, [x19, #16]
+    ldp x4, x5, [x19, #32]
+    ldp x6, x7, [x19, #48]
+    ldr x8, [x19, #64]
+    blr x20
+    stp x0, x1, [x19, #152]
+    stp d0, d1, [x19, #168]
+    stp d2, d3, [x19, #184]
+    mov sp, x29
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+    .size iosrt_call, . - iosrt_call
+
+    .globl iosrt_msgForward
+    .type iosrt_msgForward, %function
+    .p2align 2
+iosrt_msgForward:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    sub sp, sp, #208
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    str x8, [sp, #64]
+    stp d0, d1, [sp, #72]
+    stp d2, d3, [sp, #88]
+    stp d4, d5, [sp, #104]
+    stp d6, d7, [sp, #120]
+    add x9, x29, #16
+    str x9, [sp, #136]
+    str xzr, [sp, #144]
+    mov x0, sp
+    bl rt_forward_invocation
+    ldp x0, x1, [sp, #152]
+    ldp d0, d1, [sp, #168]
+    ldp d2, d3, [sp, #184]
+    mov sp, x29
+    ldp x29, x30, [sp], #16
+    ret
+    .size iosrt_msgForward, . - iosrt_msgForward
 
     .section .note.GNU-stack,"",%progbits

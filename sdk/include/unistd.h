@@ -1,4 +1,7 @@
 #pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <stddef.h>
 typedef long ssize_t;
 typedef int pid_t;
@@ -11,3 +14,6 @@ unsigned sleep(unsigned);
 pid_t getpid(void);
 int access(const char *, int);
 int unlink(const char *);
+#ifdef __cplusplus
+}
+#endif

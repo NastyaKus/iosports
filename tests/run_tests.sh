@@ -22,6 +22,7 @@ app "$S/objc_basics" 10.0 "$root/samples/objc_basics/main.m" $F
 app "$S/objc_basics.chained" 14.0 --chained "$root/samples/objc_basics/main.m" $F
 app "$S/uikit_hello" 12.0 "$root/samples/uikit_hello/main.m" $F -framework UIKit -framework CoreGraphics
 app "$S/audio_sine" 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation
+app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
 clang -target arm64-apple-ios12.0 -nostdlibinc -isystem "$root/sdk/include" -c "$root/tests/negative/missing_api.c" -o "$T/missing.o"
@@ -59,6 +60,11 @@ for flavor in linux-aarch64 android-arm64; do
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && grep -q "many render callbacks" "$T/out.txt" && python3 -I "$root/tests/check_wav.py" "$T/sine.wav" >"$T/wav.txt"; then ok "audio_sine ($(cat "$T/wav.txt"))"; else ko "audio_sine rc=$rc" "$T/out.txt"; fi
+  # 4b. C++ on the Apple libc++ ABI (only the Android build links the C++ support)
+  if [ $flavor = android-arm64 ]; then
+    $R "$S/cxx_basics" >"$T/out.txt" 2>&1; rc=$?
+    if [ $rc = 0 ] && diff -u "$root/tests/golden/cxx_basics.txt" "$T/out.txt" >"$T/diff.txt"; then ok "cxx_basics (std::__1 ABI, threads, RTTI)"; else ko "cxx_basics rc=$rc" "$T/diff.txt"; fi
+  fi
   # 5. negative cases
   check_reject() { # file pattern label
     $R "$1" >"$T/out.txt" 2>&1; rc=$?

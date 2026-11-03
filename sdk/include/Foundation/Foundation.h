@@ -330,6 +330,9 @@ __attribute__((objc_root_class))
 - (void)drain;
 @end
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 void NSLog(NSString *fmt, ...) __attribute__((format(__NSString__, 1, 2)));
 NSString *NSStringFromClass(Class c);
 Class NSClassFromString(NSString *s);
@@ -340,3 +343,6 @@ NSString *NSTemporaryDirectory(void);
 NSArray<NSString *> *NSSearchPathForDirectoriesInDomains(NSUInteger dir, NSUInteger mask, BOOL expand);
 enum { NSDocumentDirectory = 9, NSCachesDirectory = 13, NSUserDomainMask = 1 };
 extern NSString *const NSDefaultRunLoopMode;
+#ifdef __cplusplus
+}
+#endif

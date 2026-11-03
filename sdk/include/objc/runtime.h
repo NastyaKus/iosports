@@ -1,5 +1,8 @@
 #pragma once
 #include <objc/objc.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef struct objc_method *Method;
 typedef struct objc_ivar *Ivar;
 typedef struct objc_property *objc_property_t;
@@ -26,3 +29,6 @@ const char *ivar_getName(Ivar);
 SEL method_getName(Method);
 #define OBJC_ASSOCIATION_RETAIN_NONATOMIC 1
 #define OBJC_ASSOCIATION_COPY_NONATOMIC 3
+#ifdef __cplusplus
+}
+#endif

@@ -1,0 +1,12 @@
+string: Hello, C++ on iOS ABI! (size 22, long size 86)
+find: 7 substr: C++
+to_string: 42 1234567890123
+shape square area 9.0
+shape rect area 10.0
+dynamic_cast<Rect*>: no
+shared_ptr use_count=2 lock=shared
+after reset expired=1
+unordered_map a=3 b=1 size=3
+function-local static constructed 1 time(s), items=2
+threads total=10000 (expected 10000)
+bridged to NSString: 84 chars, twice(21)=42

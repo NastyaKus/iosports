@@ -32,8 +32,14 @@ struct audio_buffer { uint32_t channels, bytes; void *data; };
 struct abl { uint32_t n; uint32_t pad; struct audio_buffer b[8]; };
 
 #define UNIT_MAGIC 0x4155696f
+#define MAX_BUS 32
+enum { UK_IO, UK_MIXER, UK_CONVERTER, UK_OTHER };
+struct audio_unit;
+struct unit_input { struct render_cb cb; struct audio_unit *src; uint32_t src_bus; float volume; int enabled; };
 struct audio_unit {
-    uint32_t magic; struct acdesc desc;
+    uint32_t magic; struct acdesc desc; int kind;
+    struct unit_input in[MAX_BUS]; uint32_t nbus; float master_volume;
+    float *mixbuf; size_t mixcap;
     struct asbd out_fmt, in_fmt;
     struct render_cb cb, input_cb;
     uint32_t enable_out, enable_in, max_frames;
@@ -44,6 +50,14 @@ struct audio_unit {
     uint8_t *scratch; size_t scratch_size;
 };
 static struct acdesc g_rio = { FOURCC('a', 'u', 'o', 'u'), FOURCC('r', 'i', 'o', 'c'), FOURCC('a', 'p', 'p', 'l'), 0, 0 };
+/* components handed out for other unit types: one descriptor slot per distinct request */
+static struct acdesc g_comps[32]; static int g_ncomps;
+static int unit_kind(const struct acdesc *d) {
+    if (d->type == FOURCC('a', 'u', 'o', 'u')) return UK_IO;
+    if (d->type == FOURCC('a', 'u', 'm', 'x')) return UK_MIXER;
+    if (d->type == FOURCC('a', 'u', 'f', 'c')) return UK_CONVERTER;
+    return UK_OTHER;
+}
 
 static void default_format(struct asbd *f) {
     memset(f, 0, sizeof *f);
@@ -55,6 +69,10 @@ static void default_format(struct asbd *f) {
 void *iosrt_AudioComponentFindNext(void *after, const struct acdesc *d) {
     if (after) return NULL;
     if (d && d->type == g_rio.type && (d->subtype == g_rio.subtype || d->subtype == FOURCC('v', 'p', 'i', 'o'))) return &g_rio;
+    if (d && (d->type == FOURCC('a', 'u', 'm', 'x') || d->type == FOURCC('a', 'u', 'f', 'c') || d->type == FOURCC('a', 'u', 'o', 'u'))) {
+        for (int i = 0; i < g_ncomps; i++) if (g_comps[i].type == d->type && g_comps[i].subtype == d->subtype) return &g_comps[i];
+        if (g_ncomps < 32) { g_comps[g_ncomps] = *d; return &g_comps[g_ncomps++]; }
+    }
     if (d) {
         char t[5] = { (char)(d->type >> 24), (char)(d->type >> 16), (char)(d->type >> 8), (char)d->type, 0 };
         char s[5] = { (char)(d->subtype >> 24), (char)(d->subtype >> 16), (char)(d->subtype >> 8), (char)d->subtype, 0 };
@@ -67,6 +85,8 @@ int32_t iosrt_AudioComponentInstanceNew(void *comp, struct audio_unit **out) {
     if (!comp) return -50;
     struct audio_unit *u = rt_xcalloc(1, sizeof *u);
     u->magic = UNIT_MAGIC; u->desc = *(struct acdesc *)comp; u->enable_out = 1; u->max_frames = 4096;
+    u->kind = unit_kind(&u->desc); u->nbus = u->kind == UK_MIXER ? 8 : 1; u->master_volume = 1;
+    for (int i = 0; i < MAX_BUS; i++) { u->in[i].volume = 1; u->in[i].enabled = 1; }
     default_format(&u->out_fmt); default_format(&u->in_fmt);
     *out = u;
     return 0;
@@ -88,9 +108,17 @@ int32_t iosrt_AudioUnitSetProperty(struct audio_unit *u, uint32_t prop, uint32_t
         else if (scope == 2 && elem == 1) memcpy(&u->in_fmt, data, sizeof u->in_fmt);
         else if (scope == 2 && elem == 0) { /* hardware side: ignore */ }
         return 0;
-    case 23:  /* SetRenderCallback */
+    case 23:  /* SetRenderCallback (per input bus) */
         if (size < sizeof(struct render_cb)) return -50;
-        memcpy(&u->cb, data, sizeof u->cb); return 0;
+        if (elem < MAX_BUS) { memcpy(&u->in[elem].cb, data, sizeof(struct render_cb)); u->in[elem].src = NULL; }
+        if (elem == 0) memcpy(&u->cb, data, sizeof u->cb);
+        return 0;
+    case 11:  /* ElementCount */
+        if (scope == 1) { uint32_t n = *(const uint32_t *)data; u->nbus = n > MAX_BUS ? MAX_BUS : n; }
+        return 0;
+    case 1:   /* MakeConnection */
+        if (size >= 12) { const uint32_t *c = data; struct audio_unit *src = *(struct audio_unit *const *)data; (void)c; (void)src; }
+        return 0;
     case 2005: /* SetInputCallback */
         memcpy(&u->input_cb, data, sizeof u->input_cb); return 0;
     case 2003: /* EnableIO */
@@ -114,6 +142,9 @@ int32_t iosrt_AudioUnitGetProperty(struct audio_unit *u, uint32_t prop, uint32_t
     case 14: *(uint32_t *)data = u->max_frames; *size = 4; return 0;
     case 2: { double r = u->out_fmt.rate; memcpy(data, &r, 8); *size = 8; return 0; }
     case 2003: *(uint32_t *)data = elem == 1 ? u->enable_in : u->enable_out; *size = 4; return 0;
+    case 11: *(uint32_t *)data = u->nbus; *size = 4; return 0;
+    case 12: { double l = 0; memcpy(data, &l, 8); *size = 8; return 0; }        /* Latency */
+    case 2006: *(uint32_t *)data = 1; *size = 4; return 0;                        /* IsRunning-ish */
     default: return -10879;  /* kAudioUnitErr_InvalidProperty */
     }
 }
@@ -126,17 +157,64 @@ int32_t iosrt_AudioUnitGetPropertyInfo(struct audio_unit *u, uint32_t prop, uint
 int32_t iosrt_AudioUnitInitialize(struct audio_unit *u) { return valid(u) ? 0 : -50; }
 int32_t iosrt_AudioUnitUninitialize(struct audio_unit *u) { return valid(u) ? 0 : -50; }
 int32_t iosrt_AudioUnitReset(struct audio_unit *u, uint32_t s, uint32_t e) { (void)s; (void)e; return valid(u) ? 0 : -50; }
-int32_t iosrt_AudioUnitSetParameter(struct audio_unit *u, uint32_t id, uint32_t s, uint32_t e, float v, uint32_t off) { (void)u; (void)id; (void)s; (void)e; (void)v; (void)off; return 0; }
-int32_t iosrt_AudioUnitGetParameter(struct audio_unit *u, uint32_t id, uint32_t s, uint32_t e, float *v) { (void)u; (void)id; (void)s; (void)e; if (v) *v = 0; return 0; }
+/* multichannel mixer: param 0 = volume, 1 = enable; scope 1 input bus, 2 output (master) */
+int32_t iosrt_AudioUnitSetParameter(struct audio_unit *u, uint32_t id, uint32_t s, uint32_t e, float v, uint32_t off) {
+    (void)off; if (!valid(u)) return -50;
+    if (id == 0) { if (s == 1 && e < MAX_BUS) u->in[e].volume = v; else if (s == 2) u->master_volume = v; }
+    else if (id == 1 && s == 1 && e < MAX_BUS) u->in[e].enabled = v != 0;
+    return 0;
+}
+int32_t iosrt_AudioUnitGetParameter(struct audio_unit *u, uint32_t id, uint32_t s, uint32_t e, float *v) {
+    if (!valid(u) || !v) return -50;
+    *v = id == 0 ? (s == 1 && e < MAX_BUS ? u->in[e].volume : u->master_volume) : id == 1 && e < MAX_BUS ? (float)u->in[e].enabled : 0;
+    return 0;
+}
 int32_t iosrt_AudioUnitAddPropertyListener(struct audio_unit *u, uint32_t p, void *proc, void *ud) { (void)u; (void)p; (void)proc; (void)ud; return 0; }
 int32_t iosrt_AudioUnitRemovePropertyListenerWithUserData(struct audio_unit *u, uint32_t p, void *proc, void *ud) { (void)u; (void)p; (void)proc; (void)ud; return 0; }
 int32_t iosrt_AudioUnitAddRenderNotify(struct audio_unit *u, void *proc, void *ud) { (void)u; (void)proc; (void)ud; return 0; }
 int32_t iosrt_AudioUnitRemoveRenderNotify(struct audio_unit *u, void *proc, void *ud) { (void)u; (void)proc; (void)ud; return 0; }
-/* microphone pull (bus 1): silence until input is implemented */
-int32_t iosrt_AudioUnitRender(struct audio_unit *u, uint32_t *flags, const void *ts, uint32_t bus, uint32_t frames, struct abl *io) {
-    (void)u; (void)flags; (void)ts; (void)bus; (void)frames;
+/* Pull `frames` of a unit's output into `io` (same format the consumer asked for).
+ * IO unit: its single input (callback or connected node). Mixer: sum of enabled inputs
+ * (float32 samples assumed, as with the canonical/TAAE formats). Converter/other: pass-through. */
+static int32_t pull_input(struct audio_unit *u, uint32_t bus, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io);
+static int32_t unit_render(struct audio_unit *u, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io) {
+    if (u->kind != UK_MIXER) return pull_input(u, 0, flags, ts, frames, io);
     for (uint32_t i = 0; i < io->n && i < 8; i++) if (io->b[i].data) memset(io->b[i].data, 0, io->b[i].bytes);
+    for (uint32_t bus = 0; bus < u->nbus; bus++) {
+        struct unit_input *in = &u->in[bus];
+        if (!in->enabled || (!in->cb.proc && !in->src)) continue;
+        /* temp buffers mirroring io's layout */
+        struct abl tmp; memcpy(&tmp, io, sizeof tmp);
+        size_t total = 0; for (uint32_t i = 0; i < io->n && i < 8; i++) total += io->b[i].bytes;
+        if (total > u->mixcap) { free(u->mixbuf); u->mixbuf = rt_xmalloc(total); u->mixcap = total; }
+        size_t off = 0;
+        for (uint32_t i = 0; i < io->n && i < 8; i++) { tmp.b[i].data = (uint8_t *)u->mixbuf + off; off += io->b[i].bytes; memset(tmp.b[i].data, 0, io->b[i].bytes); }
+        uint32_t f = 0;
+        if (pull_input(u, bus, &f, ts, frames, &tmp) != 0 || (f & 16)) continue;
+        float vol = in->volume * u->master_volume;
+        for (uint32_t i = 0; i < io->n && i < 8; i++) {
+            float *d = io->b[i].data; const float *sp = tmp.b[i].data;
+            for (uint32_t k = 0; k < io->b[i].bytes / 4; k++) d[k] += sp[k] * vol;
+        }
+    }
     return 0;
+}
+static int32_t pull_input(struct audio_unit *u, uint32_t bus, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io) {
+    struct unit_input *in = bus < MAX_BUS ? &u->in[bus] : NULL;
+    if (in && in->src) return unit_render(in->src, flags, ts, frames, io);
+    if (in && in->cb.proc)
+        return ((int32_t (*)(void *, uint32_t *, const struct audio_timestamp *, uint32_t, uint32_t, struct abl *))in->cb.proc)(in->cb.refcon, flags, ts, bus, frames, io);
+    for (uint32_t i = 0; i < io->n && i < 8; i++) if (io->b[i].data) memset(io->b[i].data, 0, io->b[i].bytes);
+    if (flags) *flags |= 16;
+    return 0;
+}
+int32_t iosrt_AudioUnitRender(struct audio_unit *u, uint32_t *flags, const void *ts, uint32_t bus, uint32_t frames, struct abl *io) {
+    if (!valid(u)) return -50;
+    if (u->kind == UK_IO && bus == 1) {   /* microphone: silence until input is implemented */
+        for (uint32_t i = 0; i < io->n && i < 8; i++) if (io->b[i].data) memset(io->b[i].data, 0, io->b[i].bytes);
+        return 0;
+    }
+    return unit_render(u, flags, ts, frames, io);
 }
 
 /* ------------------------------------------------------------ rendering */
@@ -163,8 +241,7 @@ int rt_audio_render(void *unit, uint32_t frames, float *out, uint32_t out_ch) {
     ts.flags = 3;
     uint32_t aflags = 0;
     int32_t err = 0;
-    if (u->cb.proc)
-        err = ((int32_t (*)(void *, uint32_t *, const struct audio_timestamp *, uint32_t, uint32_t, struct abl *))u->cb.proc)(u->cb.refcon, &aflags, &ts, 0, frames, &list);
+    err = pull_input(u, 0, &aflags, &ts, frames, &list);
     u->sample_time += frames;
     int isfloat = (f->flags & kAudioFormatFlagIsFloat) != 0;
     uint32_t frac = (f->flags >> 7) & 0x3f;   /* 8.24 fixed point canonical format */
@@ -239,6 +316,86 @@ int32_t iosrt_AudioOutputUnitStop(struct audio_unit *u) {
     return 0;
 }
 int32_t iosrt_AudioOutputUnitPublish(const void *d, id name, uint32_t ver, void *unit) { (void)d; (void)name; (void)ver; (void)unit; return 0; }
+
+/* ------------------------------------------------------------------ AUGraph */
+struct augraph { struct audio_unit *nodes[64]; struct acdesc descs[64]; int n; int open, init, running; };
+int32_t iosrt_NewAUGraph(struct augraph **g) { *g = rt_xcalloc(1, sizeof **g); return 0; }
+int32_t iosrt_DisposeAUGraph(struct augraph *g) {
+    if (!g) return -50;
+    for (int i = 0; i < g->n; i++) if (g->nodes[i]) iosrt_AudioComponentInstanceDispose(g->nodes[i]);
+    free(g); return 0;
+}
+static int32_t graph_instantiate(struct augraph *g, int i) {
+    if (g->nodes[i]) return 0;
+    void *c = iosrt_AudioComponentFindNext(NULL, &g->descs[i]);
+    if (!c) { static struct acdesc any; any = g->descs[i]; c = &any; }
+    return iosrt_AudioComponentInstanceNew(c, &g->nodes[i]);
+}
+int32_t iosrt_AUGraphAddNode(struct augraph *g, const struct acdesc *d, int32_t *node) {
+    if (!g || g->n >= 64) return -50;
+    g->descs[g->n] = *d; *node = g->n + 1; g->n++;
+    if (g->open) graph_instantiate(g, g->n - 1);
+    return 0;
+}
+int32_t iosrt_AUGraphRemoveNode(struct augraph *g, int32_t node) { (void)g; (void)node; return 0; }
+int32_t iosrt_AUGraphOpen(struct augraph *g) { if (!g) return -50; g->open = 1; for (int i = 0; i < g->n; i++) graph_instantiate(g, i); return 0; }
+int32_t iosrt_AUGraphClose(struct augraph *g) { if (g) g->open = 0; return 0; }
+int32_t iosrt_AUGraphNodeInfo(struct augraph *g, int32_t node, struct acdesc *d, struct audio_unit **unit) {
+    if (!g || node < 1 || node > g->n) return -10866;   /* kAUGraphErr_InvalidNode */
+    if (d) *d = g->descs[node - 1];
+    if (unit) { graph_instantiate(g, node - 1); *unit = g->nodes[node - 1]; }
+    return 0;
+}
+int32_t iosrt_AUGraphConnectNodeInput(struct augraph *g, int32_t src, uint32_t sbus, int32_t dst, uint32_t dbus) {
+    if (!g || src < 1 || src > g->n || dst < 1 || dst > g->n || dbus >= MAX_BUS) return -10866;
+    graph_instantiate(g, src - 1); graph_instantiate(g, dst - 1);
+    struct audio_unit *d = g->nodes[dst - 1];
+    d->in[dbus].src = g->nodes[src - 1]; d->in[dbus].src_bus = sbus; d->in[dbus].cb.proc = NULL;
+    return 0;
+}
+int32_t iosrt_AUGraphDisconnectNodeInput(struct augraph *g, int32_t dst, uint32_t dbus) {
+    if (!g || dst < 1 || dst > g->n || dbus >= MAX_BUS) return -10866;
+    if (g->nodes[dst - 1]) { g->nodes[dst - 1]->in[dbus].src = NULL; g->nodes[dst - 1]->in[dbus].cb.proc = NULL; }
+    return 0;
+}
+int32_t iosrt_AUGraphSetNodeInputCallback(struct augraph *g, int32_t node, uint32_t bus, const struct render_cb *cb) {
+    if (!g || node < 1 || node > g->n || bus >= MAX_BUS) return -10866;
+    graph_instantiate(g, node - 1);
+    struct audio_unit *u = g->nodes[node - 1];
+    u->in[bus].cb = *cb; u->in[bus].src = NULL;
+    if (bus == 0) u->cb = *cb;
+    return 0;
+}
+int32_t iosrt_AUGraphClearConnections(struct augraph *g) {
+    for (int i = 0; g && i < g->n; i++) if (g->nodes[i]) for (int b = 0; b < MAX_BUS; b++) { g->nodes[i]->in[b].src = NULL; g->nodes[i]->in[b].cb.proc = NULL; }
+    return 0;
+}
+int32_t iosrt_AUGraphGetNodeInteractions(struct augraph *g, int32_t node, uint32_t *count, void *out) { (void)g; (void)node; (void)out; if (count) *count = 0; return 0; }
+int32_t iosrt_AUGraphGetNodeCount(struct augraph *g, uint32_t *n) { if (n) *n = g ? (uint32_t)g->n : 0; return 0; }
+int32_t iosrt_AUGraphGetIndNode(struct augraph *g, uint32_t i, int32_t *node) { if (!g || i >= (uint32_t)g->n) return -50; *node = (int32_t)i + 1; return 0; }
+int32_t iosrt_AUGraphInitialize(struct augraph *g) { if (!g) return -50; if (!g->open) iosrt_AUGraphOpen(g); g->init = 1; return 0; }
+int32_t iosrt_AUGraphUninitialize(struct augraph *g) { if (g) g->init = 0; return 0; }
+int32_t iosrt_AUGraphIsInitialized(struct augraph *g, long *out) { if (out) *(char *)out = g && g->init; return 0; }
+int32_t iosrt_AUGraphIsRunning(struct augraph *g, long *out) { if (out) *(char *)out = g && g->running; return 0; }
+int32_t iosrt_AUGraphIsOpen(struct augraph *g, long *out) { if (out) *(char *)out = g && g->open; return 0; }
+int32_t iosrt_AUGraphUpdate(struct augraph *g, long *done) { (void)g; if (done) *(char *)done = 1; return 0; }
+int32_t iosrt_AUGraphStart(struct augraph *g) {
+    if (!g) return -50;
+    if (!g->init) iosrt_AUGraphInitialize(g);
+    for (int i = 0; i < g->n; i++) if (g->nodes[i] && g->nodes[i]->kind == UK_IO) iosrt_AudioOutputUnitStart(g->nodes[i]);
+    g->running = 1; return 0;
+}
+int32_t iosrt_AUGraphStop(struct augraph *g) {
+    if (!g) return -50;
+    for (int i = 0; i < g->n; i++) if (g->nodes[i] && g->nodes[i]->kind == UK_IO) iosrt_AudioOutputUnitStop(g->nodes[i]);
+    g->running = 0; return 0;
+}
+int32_t iosrt_AudioComponentInstantiate(void *comp, uint32_t opts, void *block) {
+    struct audio_unit *u = NULL; int32_t e = iosrt_AudioComponentInstanceNew(comp, &u); (void)opts;
+    if (block) ((void (*)(void *, void *, int32_t))((struct rt_block *)block)->invoke)(block, u, e);
+    return 0;
+}
+int32_t iosrt_MusicDeviceMIDIEvent(void *u, uint32_t st, uint32_t d1, uint32_t d2, uint32_t off) { (void)u; (void)st; (void)d1; (void)d2; (void)off; return 0; }
 
 /* Legacy AudioSession C API and system sounds: accepted, no effect */
 int32_t iosrt_AudioSessionInitialize(void *rl, void *mode, void *proc, void *ud) { (void)rl; (void)mode; (void)proc; (void)ud; return 0; }

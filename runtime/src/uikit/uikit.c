@@ -374,6 +374,7 @@ static long app_orientation(id self, SEL s) { (void)self; (void)s; return 1; }
 static rt_bool app_openURL(id self, SEL s, id url) { (void)self; (void)s; (void)url; return 0; }
 static void app_setIdle(id self, SEL s, long v) { (void)s; ((struct uiapp *)self)->idle = v; }
 static void app_setNetworkIndicator(id self, SEL s, long v) { (void)self; (void)s; (void)v; }
+static long app_zero(id self, SEL s) { (void)self; (void)s; return 0; }
 
 /* ------------------------------------------------------------ UITouch */
 static CGPoint t_locationInView(id self, SEL s, id view) {
@@ -670,6 +671,10 @@ void rt_uikit_init(void) {
     IM(ap, "setStatusBarHidden:", app_setNetworkIndicator); IM(ap, "setStatusBarHidden:withAnimation:", v_noop2);
     IM(ap, "registerForRemoteNotifications", v_noop); IM(ap, "beginReceivingRemoteControlEvents", v_noop);
     IM(ap, "endReceivingRemoteControlEvents", v_noop);
+    IM(ap, "applicationIconBadgeNumber", app_zero); IM(ap, "setApplicationIconBadgeNumber:", v_setNoopL);
+    IM(ap, "isIgnoringInteractionEvents", app_zero); IM(ap, "beginIgnoringInteractionEvents", v_noop); IM(ap, "endIgnoringInteractionEvents", v_noop);
+    IM(ap, "registerUserNotificationSettings:", v_noop1); IM(ap, "setMinimumBackgroundFetchInterval:", v_setNoopL);
+    IM(ap, "isRegisteredForRemoteNotifications", app_zero); IM(ap, "backgroundTimeRemaining", app_zero);
 
     NEWCLASS(UIScreen, o, 0);
     CM(RT_CLASS(UIScreen), "mainScreen", sc_main); IM(RT_CLASS(UIScreen), "bounds", sc_bounds);

@@ -51,19 +51,82 @@ _Noreturn void rt_guest_exit(int code, const char *reason) {
 }
 
 /* ------------------------------------------------------- crash handler */
+const char *rt_data_stub_name(uintptr_t pc);
+const char *rt_objc_symbolize(uint64_t addr, uint64_t *off, char *buf, size_t n);
+static char symbuf[4][300]; static int symi;
+/* best name for a code address: ObjC method, else nearest Mach-O symbol, else runtime */
+static const char *sym_for(uint64_t a, uint64_t *off) {
+    if (!rt_image_contains(a)) { *off = 0; return NULL; }
+    char *b = symbuf[symi++ & 3];
+    uint64_t o1 = 0, o2 = 0;
+    const char *m = rt_objc_symbolize(a, &o1, b, 300);
+    const char *s = rt_image_symbolize(a, &o2);
+    if (m && (!s || o1 <= o2)) { *off = o1; return m; }
+    *off = o2; return s;
+}
+int rt_is_strict(void);
+int rt_first_time(const char *key);
 static void crash_handler(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     uint64_t pc = (uint64_t)uc->uc_mcontext.pc, lr = (uint64_t)uc->uc_mcontext.regs[30];
+    /* lenient recovery: a call into a missing symbol that was classified as data, or a call
+     * through a NULL weak import, behaves like a function returning 0 */
+    if (!rt_is_strict() && (sig == SIGSEGV || sig == SIGBUS)) {
+        const char *dn = rt_data_stub_name((uintptr_t)pc);
+        if (dn || pc == 0) {
+            char key[300]; snprintf(key, sizeof key, "%s", dn ? dn : "<NULL function pointer>");
+            if (rt_first_time(key)) rt_warn("missing: %s called as a function (returns 0)", key);
+            uc->uc_mcontext.pc = lr;
+            uc->uc_mcontext.regs[0] = 0; uc->uc_mcontext.regs[1] = 0;
+            return;
+        }
+    }
     char buf[1024]; int n;
     uint64_t off = 0;
-    const char *sym = rt_image_symbolize(pc, &off);
+    const char *sym = sym_for(pc, &off);
     n = snprintf(buf, sizeof buf, "[iosrt] guest crashed: signal %d at address %p, pc=0x%llx (%s+0x%llx)",
                  sig, si->si_addr, (unsigned long long)pc, sym ? sym : "runtime", (unsigned long long)off);
-    sym = rt_image_symbolize(lr, &off);
+    sym = sym_for(lr, &off);
     n += snprintf(buf + n, sizeof buf - (size_t)n, ", lr=0x%llx (%s+0x%llx)\n", (unsigned long long)lr, sym ? sym : "runtime", (unsigned long long)off);
-    if (write(2, buf, (size_t)n) < 0) { /* ignore */ }
-    if (rt_plat->on_exit) rt_plat->on_exit(128 + sig, buf);
+    rt_out(2, buf, (size_t)n);
+    /* frame-pointer backtrace (both Darwin and AAPCS64 code keep x29 chains) */
+    uint64_t fp = (uint64_t)uc->uc_mcontext.regs[29];
+    for (int i = 0; i < 24 && fp && (fp & 7) == 0; i++) {
+        uint64_t *fr = (uint64_t *)(uintptr_t)fp;
+        uint64_t ret = fr[1];
+        if (!ret) break;
+        sym = sym_for(ret, &off);
+        n = snprintf(buf, sizeof buf, "[iosrt]   #%d 0x%llx %s+0x%llx\n", i, (unsigned long long)ret, sym ? sym : "runtime", (unsigned long long)off);
+        rt_out(2, buf, (size_t)n);
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
+    if (rt_plat->on_exit) rt_plat->on_exit(128 + sig, "guest crashed (see log for backtrace)");
     _exit(128 + sig);
+}
+/* IOSRT_WATCHDOG=N: after N seconds (and every N seconds after), print where the guest main thread is */
+static void dump_handler(int sig, siginfo_t *si, void *uc_) {
+    (void)sig; (void)si; ucontext_t *uc = uc_;
+    char buf[512]; uint64_t off = 0;
+    uint64_t pc = (uint64_t)uc->uc_mcontext.pc;
+    const char *sym = sym_for(pc, &off);
+    int n = snprintf(buf, sizeof buf, "[iosrt] watchdog: main thread pc=0x%llx %s+0x%llx\n", (unsigned long long)pc, sym ? sym : "runtime", (unsigned long long)off);
+    rt_out(2, buf, (size_t)n);
+    uint64_t fp = (uint64_t)uc->uc_mcontext.regs[29];
+    for (int i = 0; i < 16 && fp && (fp & 7) == 0; i++) {
+        uint64_t *fr = (uint64_t *)(uintptr_t)fp; uint64_t ret = fr[1];
+        if (!ret) break;
+        sym = sym_for(ret, &off);
+        n = snprintf(buf, sizeof buf, "[iosrt]   #%d 0x%llx %s+0x%llx\n", i, (unsigned long long)ret, sym ? sym : "runtime", (unsigned long long)off);
+        rt_out(2, buf, (size_t)n);
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
+}
+static void *watchdog(void *p) {
+    int secs = (int)(intptr_t)p;
+    for (;;) { sleep((unsigned)secs); if (guest_main_valid) pthread_kill(guest_main, SIGUSR2); }
+    return NULL;
 }
 static void install_crash_handler(void) {
     static char altstack[65536];
@@ -73,6 +136,28 @@ static void install_crash_handler(void) {
     sa.sa_sigaction = crash_handler; sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGILL, &sa, NULL); sigaction(SIGFPE, &sa, NULL);
+    const char *wd = getenv("IOSRT_WATCHDOG");
+    if (wd && atoi(wd) > 0) {
+        struct sigaction da; memset(&da, 0, sizeof da);
+        da.sa_sigaction = dump_handler; da.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigaction(SIGUSR2, &da, NULL);
+        pthread_t t; pthread_create(&t, NULL, watchdog, (void *)(intptr_t)atoi(wd)); pthread_detach(t);
+    }
+}
+
+/* frame-pointer backtrace of the calling thread (for exceptions / fatal errors) */
+void rt_print_backtrace(void) {
+    uint64_t fp = (uint64_t)(uintptr_t)__builtin_frame_address(0);
+    char buf[512];
+    for (int i = 0; i < 20 && fp && (fp & 7) == 0; i++) {
+        uint64_t *fr = (uint64_t *)(uintptr_t)fp;
+        uint64_t ret = fr[1], off = 0;
+        if (!ret) break;
+        const char *sym = sym_for(ret, &off);
+        if (sym) { int n = snprintf(buf, sizeof buf, "[iosrt]   at %s+0x%llx\n", sym, (unsigned long long)off); rt_out(2, buf, (size_t)n); }
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
 }
 
 /* -------------------------------------------------- bundle resolution */

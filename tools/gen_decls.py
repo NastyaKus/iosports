@@ -3,10 +3,10 @@
 runtime/src/exports/*.def (host libc functions come from the system headers)."""
 import re, sys, pathlib
 defdir = pathlib.Path(sys.argv[1]); out = pathlib.Path(sys.argv[2])
-PREFIXES = ("iosrt_", "objc_", "sel_", "object_", "class_", "method_", "ivar_", "property_", "protocol_", "_Block_")
+PREFIXES = ("iosrt_", "objc_", "sel_", "object_", "class_", "method_", "ivar_", "property_", "protocol_", "_Block_", "_Z", "__cxa_", "__dynamic_cast")
 names = set()
 for f in sorted(defdir.glob("*.def")):
-    for m in re.finditer(r"^SYM\(\s*\w+\s*,\s*[\w$]+\s*,\s*&?\s*(\w+)\s*\)", f.read_text(), re.M):
+    for m in re.finditer(r"^SYM\(\s*[\w+]+\s*,\s*[\w$]+\s*,\s*&?\s*(\w+)\s*\)", f.read_text(), re.M):
         n = m.group(1)
         if n.startswith(PREFIXES) and not n.startswith("_Block_object"):  # clang builtins
             names.add(n)

@@ -16,9 +16,14 @@ RT_DEFINE_CLASS(__NSStackBlock);
 RT_DEFINE_CLASS(__NSMallocBlock);
 RT_DEFINE_CLASS(__NSGlobalBlock);
 
+extern char iosrt_objc_empty_cache[];
 static struct obj_header *hdr(id o) {
-    if (!o || rt_image_contains((uint64_t)(uintptr_t)o)) return NULL;
-    if (rt_cls(o->isa)->flags & RT_CLS_META) return NULL;          /* class objects */
+    if ((uintptr_t)o < 0x100000 || ((uintptr_t)o & 7) || rt_image_contains((uint64_t)(uintptr_t)o)) return NULL;
+    /* Only objects allocated by rt_alloc_instance carry the magic header; class objects,
+     * constants and foreign pointers do not. Never dereference the class here: guest
+     * pointers can be anything (CF-style stubs, placeholder classes...). */
+    const char *rt_data_stub_name(uintptr_t pc);
+    if (rt_data_stub_name((uintptr_t)o)) return NULL;
     struct obj_header *h = (struct obj_header *)((uint8_t *)o - sizeof(struct obj_header));
     return h->magic == OBJ_MAGIC ? h : NULL;
 }
@@ -327,7 +332,9 @@ static id blk_autorelease(id self, SEL s) { (void)s; return objc_autorelease(sel
 static void blk_invoke(id self, SEL s) { (void)s; ((void (*)(void *))((struct rt_block *)self)->invoke)(self); }
 
 /* -------------------------------------------------------- exceptions */
+void rt_print_backtrace(void);
 _Noreturn void objc_exception_throw(id exc) {
+    rt_print_backtrace();
     char *d = rt_describe(exc);
     char msg[1024];
     id name = rt_responds(exc, rt_sel("name")) ? RT_SEND0(id, exc, "name") : NULL;
@@ -401,7 +408,9 @@ rt_bool class_conformsToProtocol(Class c, const void *p) { return p && rt_class_
 const void *objc_getProtocol(const char *n) { return rt_protocol_named(n); }
 const char *protocol_getName(const void *p) { return rt_protocol_name(p); }
 void *class_getInstanceVariable(Class c, const char *name) {
-    for (; c; c = c->superclass) { struct rt_class *rc = rt_cls(c); for (size_t i = 0; i < rc->nivars; i++) if (!strcmp(rc->ivars[i].name, name)) return &rc->ivars[i]; }
+    if (getenv("IOSRT_TRACE_RTAPI")) rt_warn("class_getInstanceVariable(%s, %s)", c ? rt_class_name(c) : "nil", name ? name : "NULL");
+    if (!name) return NULL;
+    for (; c; c = c->superclass) { struct rt_class *rc = rt_cls(c); for (size_t i = 0; i < rc->nivars; i++) if (rc->ivars[i].name && !strcmp(rc->ivars[i].name, name)) return &rc->ivars[i]; }
     return NULL;
 }
 long ivar_getOffset(struct rt_ivar *iv) { return iv ? iv->offset : 0; }
@@ -489,4 +498,28 @@ void rt_blocks_init(void) {
     rt_native_method(b, "release", blk_release, "v16@0:8");
     rt_native_method(b, "autorelease", blk_autorelease, "@16@0:8");
     rt_native_method(b, "invoke", blk_invoke, "v16@0:8");
+}
+
+void *class_getProperty(Class c, const char *name) {
+    if (!name) return NULL;
+    for (; c; c = c->superclass) { struct rt_class *rc = rt_cls(c); for (size_t i = 0; i < rc->nprops; i++) if (rc->props[i].name && !strcmp(rc->props[i].name, name)) return &rc->props[i]; }
+    return NULL;
+}
+/* property attribute string "T@\"NSString\",C,N,V_name": return the value for one attribute letter */
+static char *property_copyAttributeValue_(struct rt_prop *p, const char *attr);
+char *property_copyAttributeValue(struct rt_prop *p, const char *attr) {
+    char *r = property_copyAttributeValue_(p, attr);
+    if (getenv("IOSRT_TRACE_RTAPI")) rt_warn("property_copyAttributeValue(%s [%s], %s) = %s", p ? p->name : "NULL", p && p->attrs ? p->attrs : "", attr, r ? r : "NULL");
+    return r;
+}
+static char *property_copyAttributeValue_(struct rt_prop *p, const char *attr) {
+    if (!p || !p->attrs || !attr || !*attr) return NULL;
+    const char *a = p->attrs;
+    while (*a) {
+        const char *end = a; int q = 0;
+        while (*end && (q || *end != ',')) { if (*end == '"') q = !q; end++; }
+        if (*a == attr[0]) { size_t n = (size_t)(end - a - 1); char *r = malloc(n + 1); memcpy(r, a + 1, n); r[n] = 0; return r; }
+        a = *end ? end + 1 : end;
+    }
+    return NULL;
 }

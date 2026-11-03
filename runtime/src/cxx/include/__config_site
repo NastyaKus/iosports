@@ -1,0 +1,15 @@
+/* iosrt: libc++ configuration matching Apple's arm64 ABI.
+ * Used to build the runtime's C++ support (and C++ test apps) from the NDK's
+ * libc++ headers: inline namespace std::__1 (as on Apple platforms instead of
+ * the NDK's __ndk1) and the "alternate" std::string layout Apple uses on arm64. */
+#ifndef _LIBCPP___CONFIG_SITE
+#define _LIBCPP___CONFIG_SITE
+#define _LIBCPP_ABI_VERSION 1
+#define _LIBCPP_ABI_NAMESPACE __1
+#define _LIBCPP_ABI_ALTERNATE_STRING_LAYOUT
+#define _LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS
+#define _LIBCPP_HAS_NO_STD_MODULES
+#define _LIBCPP_HAS_NO_TIME_ZONE_DATABASE
+#define _LIBCPP_PSTL_CPU_BACKEND_SERIAL
+#define _LIBCPP_HARDENING_MODE_DEFAULT 2
+#endif

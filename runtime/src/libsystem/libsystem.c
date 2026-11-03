@@ -308,12 +308,9 @@ int iosrt_pthread_cond_signal(pthread_cond_t *c) { cond_fix(c); return pthread_c
 int iosrt_pthread_cond_broadcast(pthread_cond_t *c) { cond_fix(c); return pthread_cond_broadcast(c); }
 int iosrt_pthread_cond_destroy(pthread_cond_t *c) { cond_fix(c); return pthread_cond_destroy(c); }
 /* pthread_once_t on Darwin: { long sig; char opaque[8]; } */
+static int once_begin2(long *pred);
 int iosrt_pthread_once(long *once, void (*fn)(void)) {
-    static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
-    if (__atomic_load_n(&once[1], __ATOMIC_ACQUIRE) == 1) return 0;
-    pthread_mutex_lock(&m);
-    if (once[1] != 1) { fn(); __atomic_store_n(&once[1], 1, __ATOMIC_RELEASE); }
-    pthread_mutex_unlock(&m);
+    if (once_begin2(&once[1])) { fn(); __atomic_store_n(&once[1], ~0L, __ATOMIC_RELEASE); }
     return 0;
 }
 struct thread_start { void *(*fn)(void *); void *arg; };
@@ -474,42 +471,75 @@ const char *iosrt_dlerror(void) { return "symbol not provided by iosrt"; }
 double iosrt_exp10(double x) { return pow(10.0, x); }
 float iosrt_exp10f(float x) { return powf(10.0f, x); }
 
-/* ---------------------------------------------------- libdispatch (tiny) */
-struct rt_dq_item { void (*fn)(void *); void *ctx; void *block; struct rt_dq_item *next; };
+/* ---------------------------------------------------------- libdispatch */
+/* Queues: the main queue is drained by the guest main thread's run loop; private
+ * serial queues own one worker thread and run items FIFO; concurrent/global queues
+ * run each item on its own thread. dispatch_sync waits for its item on serial/main. */
+struct rt_dq_item { void (*fn)(void *); void *ctx; void *block; struct rt_dq_item *next; struct rt_queue *q;
+                    pthread_mutex_t *done_m; pthread_cond_t *done_c; volatile int *done; };
+struct rt_queue { const char *label; int main; int concurrent; pthread_mutex_t m; struct rt_dq_item *head, *tail; int busy; };
 static struct rt_dq_item *mq_head, *mq_tail;
 static pthread_mutex_t mq_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t mq_cond = PTHREAD_COND_INITIALIZER;
-/* queue objects: only identity matters */
-struct rt_queue { const char *label; int main; };
-struct rt_queue iosrt_dispatch_main_q = { "com.apple.main-thread", 1 };
-static struct rt_queue global_q = { "com.apple.root.default-qos", 0 };
+struct rt_queue iosrt_dispatch_main_q = { "com.apple.main-thread", 1, 0, PTHREAD_MUTEX_INITIALIZER, NULL, NULL, 0 };
+static struct rt_queue global_q = { "com.apple.root.default-qos", 0, 1, PTHREAD_MUTEX_INITIALIZER, NULL, NULL, 0 };
+static __thread struct rt_queue *cur_queue;
+int iosrt_dispatch_queue_attr_concurrent[4];
 
 void *iosrt_dispatch_get_global_queue(long prio, unsigned long flags) { (void)prio; (void)flags; return &global_q; }
 void *iosrt_dispatch_queue_create(const char *label, void *attr) {
-    (void)attr; struct rt_queue *q = rt_xcalloc(1, sizeof *q); q->label = rt_xstrdup(label ? label : ""); return q;
+    struct rt_queue *q = rt_xcalloc(1, sizeof *q);
+    q->label = rt_xstrdup(label ? label : "");
+    q->concurrent = attr == (void *)iosrt_dispatch_queue_attr_concurrent;
+    pthread_mutex_init(&q->m, NULL);
+    return q;
 }
 static void block_invoke(void *b) { ((void (*)(void *))((struct rt_block *)b)->invoke)(b); }
-static void *async_thread(void *p) {
-    struct rt_dq_item *it = p;
+static void run_item(struct rt_dq_item *it) {
+    struct rt_queue *saved = cur_queue; cur_queue = it->q;
     void *pool = objc_autoreleasePoolPush();
-    if (it->block) { block_invoke(it->block); _Block_release(it->block); }
+    if (it->block) { block_invoke(it->block); if (!it->done) _Block_release(it->block); }
     else it->fn(it->ctx);
     objc_autoreleasePoolPop(pool);
-    free(it);
-    return NULL;
+    cur_queue = saved;
+    if (it->done) { pthread_mutex_lock(it->done_m); *it->done = 1; pthread_cond_broadcast(it->done_c); pthread_mutex_unlock(it->done_m); }
+    else free(it);
+}
+static void *item_thread(void *p) { run_item(p); return NULL; }
+static void *serial_worker(void *p) {
+    struct rt_queue *q = p;
+    for (;;) {
+        pthread_mutex_lock(&q->m);
+        struct rt_dq_item *it = q->head;
+        if (!it) { q->busy = 0; pthread_mutex_unlock(&q->m); return NULL; }
+        q->head = it->next; if (!q->head) q->tail = NULL;
+        pthread_mutex_unlock(&q->m);
+        run_item(it);
+    }
+}
+static void spawn(void *(*fn)(void *), void *arg) {
+    pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&a, 1 << 20);
+    pthread_create(&t, &a, fn, arg); pthread_attr_destroy(&a);
 }
 static void enqueue(struct rt_queue *q, struct rt_dq_item *it) {
-    if (q && q->main) {
+    if (!q) q = &global_q;
+    it->q = q; it->next = NULL;
+    if (q->main) {
         pthread_mutex_lock(&mq_lock);
-        it->next = NULL;
         if (mq_tail) mq_tail->next = it; else mq_head = it;
         mq_tail = it;
         pthread_cond_broadcast(&mq_cond);
         pthread_mutex_unlock(&mq_lock);
+    } else if (q->concurrent) {
+        spawn(item_thread, it);
     } else {
-        /* serial semantics of private queues are not modelled: one thread per item */
-        pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
-        pthread_create(&t, &a, async_thread, it); pthread_attr_destroy(&a);
+        pthread_mutex_lock(&q->m);
+        if (q->tail) q->tail->next = it; else q->head = it;
+        q->tail = it;
+        int start = !q->busy; q->busy = 1;
+        pthread_mutex_unlock(&q->m);
+        if (start) spawn(serial_worker, q);
     }
 }
 void iosrt_dispatch_async(struct rt_queue *q, void *block) {
@@ -518,11 +548,23 @@ void iosrt_dispatch_async(struct rt_queue *q, void *block) {
 void iosrt_dispatch_async_f(struct rt_queue *q, void *ctx, void (*fn)(void *)) {
     struct rt_dq_item *it = rt_xcalloc(1, sizeof *it); it->fn = fn; it->ctx = ctx; enqueue(q, it);
 }
-void iosrt_dispatch_sync(struct rt_queue *q, void *block) {
-    (void)q;   /* run inline: correct for the common "sync onto a serial queue" use */
-    block_invoke(block);
+static void sync_item(struct rt_queue *q, void *block, void *ctx, void (*fn)(void *)) {
+    if (!q) q = &global_q;
+    int inline_run = q->concurrent || cur_queue == q || (q->main && rt_is_guest_main_thread());
+    if (inline_run) {
+        struct rt_queue *saved = cur_queue; cur_queue = q;
+        if (block) block_invoke(block); else fn(ctx);
+        cur_queue = saved;
+        return;
+    }
+    pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER; pthread_cond_t c = PTHREAD_COND_INITIALIZER; volatile int done = 0;
+    struct rt_dq_item it; memset(&it, 0, sizeof it);
+    it.block = block; it.fn = fn; it.ctx = ctx; it.done_m = &m; it.done_c = &c; it.done = &done;
+    enqueue(q, &it);
+    pthread_mutex_lock(&m); while (!done) pthread_cond_wait(&c, &m); pthread_mutex_unlock(&m);
 }
-void iosrt_dispatch_sync_f(struct rt_queue *q, void *ctx, void (*fn)(void *)) { (void)q; fn(ctx); }
+void iosrt_dispatch_sync(struct rt_queue *q, void *block) { sync_item(q, block, NULL, NULL); }
+void iosrt_dispatch_sync_f(struct rt_queue *q, void *ctx, void (*fn)(void *)) { sync_item(q, NULL, ctx, fn); }
 struct after_arg { int64_t ns; struct rt_queue *q; void *block; };
 static void *after_thread(void *p) {
     struct after_arg *a = p;
@@ -542,23 +584,21 @@ void iosrt_dispatch_after(uint64_t when, struct rt_queue *q, void *block) {
     int64_t now = (int64_t)iosrt_mach_absolute_time();
     a->ns = when == ~0ULL ? 0 : (int64_t)when - now; if (a->ns < 0) a->ns = 0;
     a->q = q; a->block = _Block_copy(block);
-    pthread_t t; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    pthread_create(&t, &at, after_thread, a); pthread_attr_destroy(&at);
+    spawn(after_thread, a);
 }
-void iosrt_dispatch_once(long *pred, void *block) {
-    static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
-    if (__atomic_load_n(pred, __ATOMIC_ACQUIRE) == ~0L) return;
-    pthread_mutex_lock(&m);
-    if (*pred != ~0L) { block_invoke(block); __atomic_store_n(pred, ~0L, __ATOMIC_RELEASE); }
-    pthread_mutex_unlock(&m);
+/* once: predicate 0 = not run, 1 = running, ~0 = done. No global lock, so nested
+ * dispatch_once calls on *different* predicates work (as on Darwin). */
+static int once_begin(long *pred) {
+    for (;;) {
+        long v = __atomic_load_n(pred, __ATOMIC_ACQUIRE);
+        if (v == ~0L) return 0;
+        long z = 0;
+        if (v == 0 && __atomic_compare_exchange_n(pred, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return 1;
+        sched_yield();
+    }
 }
-void iosrt_dispatch_once_f(long *pred, void *ctx, void (*fn)(void *)) {
-    static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
-    if (__atomic_load_n(pred, __ATOMIC_ACQUIRE) == ~0L) return;
-    pthread_mutex_lock(&m);
-    if (*pred != ~0L) { fn(ctx); __atomic_store_n(pred, ~0L, __ATOMIC_RELEASE); }
-    pthread_mutex_unlock(&m);
-}
+void iosrt_dispatch_once(long *pred, void *block) { if (once_begin(pred)) { block_invoke(block); __atomic_store_n(pred, ~0L, __ATOMIC_RELEASE); } }
+void iosrt_dispatch_once_f(long *pred, void *ctx, void (*fn)(void *)) { if (once_begin(pred)) { fn(ctx); __atomic_store_n(pred, ~0L, __ATOMIC_RELEASE); } }
 /* semaphores */
 struct rt_sema { pthread_mutex_t m; pthread_cond_t c; long v; };
 void *iosrt_dispatch_semaphore_create(long v) { struct rt_sema *s = rt_xcalloc(1, sizeof *s); pthread_mutex_init(&s->m, NULL); pthread_cond_init(&s->c, NULL); s->v = v; return s; }
@@ -590,11 +630,7 @@ void rt_runloop_drain_main_queue(void) {
         if (it) { mq_head = it->next; if (!mq_head) mq_tail = NULL; }
         pthread_mutex_unlock(&mq_lock);
         if (!it) return;
-        void *pool = objc_autoreleasePoolPush();
-        if (it->block) { block_invoke(it->block); _Block_release(it->block); }
-        else it->fn(it->ctx);
-        objc_autoreleasePoolPop(pool);
-        free(it);
+        run_item(it);
     }
 }
 /* wait up to `ms` for main-queue work (used by run loops) */
@@ -626,4 +662,134 @@ unsigned long iosrt_vm_page_size = 16384;
 int iosrt_pthread_attr_setdetachstate(pthread_attr_t *a, int st) { return pthread_attr_setdetachstate(a, st == 2 ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE); }
 int iosrt_pthread_setschedparam(pthread_t t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
 _Noreturn void iosrt_unwind_resume(void *exc) { (void)exc; rt_guest_exit(72, "exception unwinding (_Unwind_Resume) is not supported"); }
-_Noreturn void iosrt_cxa_throw(void *exc, void *type, void *dtor) { (void)exc; (void)type; (void)dtor; rt_guest_exit(72, "uncaught C++ exception (C++ exceptions are not supported)"); }
+void iosrt_cxx_throw(void *obj, void *tinfo, void (*dest)(void *)) __attribute__((weak));
+_Noreturn void iosrt_cxa_throw(void *exc, void *type, void (*dtor)(void *)) {
+    if (iosrt_cxx_throw) iosrt_cxx_throw(exc, type, dtor);      /* richer message when C++ support is linked */
+    rt_guest_exit(72, "uncaught C++ exception (exception unwinding is not supported yet)");
+}
+_Noreturn void iosrt_cxa_rethrow(void) { rt_guest_exit(72, "C++ rethrow (exception unwinding is not supported yet)"); }
+_Noreturn void iosrt_terminate(void) { rt_guest_exit(134, "std::terminate called"); }
+
+/* ------------------------------------------- libdispatch: more of the API */
+struct qspec { struct rt_queue *q; const void *key; void *val; };
+static struct qspec *qspecs; static size_t nqspecs, capqspecs;
+static pthread_mutex_t qspec_lock = PTHREAD_MUTEX_INITIALIZER;
+void iosrt_dispatch_queue_set_specific(struct rt_queue *q, const void *key, void *val, void (*dtor)(void *)) {
+    (void)dtor;
+    pthread_mutex_lock(&qspec_lock);
+    for (size_t i = 0; i < nqspecs; i++) if (qspecs[i].q == q && qspecs[i].key == key) { qspecs[i].val = val; pthread_mutex_unlock(&qspec_lock); return; }
+    if (nqspecs == capqspecs) { capqspecs = capqspecs ? capqspecs * 2 : 16; qspecs = realloc(qspecs, capqspecs * sizeof *qspecs); }
+    qspecs[nqspecs++] = (struct qspec){ q, key, val };
+    pthread_mutex_unlock(&qspec_lock);
+}
+void *iosrt_dispatch_queue_get_specific(struct rt_queue *q, const void *key) {
+    void *r = NULL;
+    pthread_mutex_lock(&qspec_lock);
+    for (size_t i = 0; i < nqspecs; i++) if (qspecs[i].q == q && qspecs[i].key == key) { r = qspecs[i].val; break; }
+    pthread_mutex_unlock(&qspec_lock);
+    return r;
+}
+void *iosrt_dispatch_get_specific(const void *key) {
+    struct rt_queue *q = cur_queue ? cur_queue : (rt_is_guest_main_thread() ? &iosrt_dispatch_main_q : NULL);
+    return q ? iosrt_dispatch_queue_get_specific(q, key) : NULL;
+}
+void iosrt_dispatch_barrier_async(struct rt_queue *q, void *block) { iosrt_dispatch_async(q, block); }
+void iosrt_dispatch_barrier_sync(struct rt_queue *q, void *block) { iosrt_dispatch_sync(q, block); }
+void iosrt_dispatch_suspend(void *o) { (void)o; }
+void iosrt_dispatch_resume_noop(void *o) { (void)o; }
+void iosrt_dispatch_set_target_queue(void *o, void *q) { (void)o; (void)q; }
+void *iosrt_dispatch_get_current_queue(void) { return cur_queue ? (void *)cur_queue : (void *)&iosrt_dispatch_main_q; }
+void *iosrt_dispatch_queue_attr_make_with_qos_class(void *a, int qos, int prio) { (void)qos; (void)prio; return a; }
+void iosrt_dispatch_apply(size_t n, void *q, void *block) {
+    (void)q;
+    for (size_t i = 0; i < n; i++) ((void (*)(void *, size_t))((struct rt_block *)block)->invoke)(block, i);
+}
+/* groups */
+struct rt_group { pthread_mutex_t m; pthread_cond_t c; long n; void *notify_block; struct rt_queue *notify_q; };
+void *iosrt_dispatch_group_create(void) { struct rt_group *g = rt_xcalloc(1, sizeof *g); pthread_mutex_init(&g->m, NULL); pthread_cond_init(&g->c, NULL); return g; }
+void iosrt_dispatch_group_enter(struct rt_group *g) { pthread_mutex_lock(&g->m); g->n++; pthread_mutex_unlock(&g->m); }
+void iosrt_dispatch_group_leave(struct rt_group *g) {
+    pthread_mutex_lock(&g->m);
+    void *nb = NULL; struct rt_queue *nq = NULL;
+    if (--g->n <= 0) { g->n = 0; pthread_cond_broadcast(&g->c); nb = g->notify_block; nq = g->notify_q; g->notify_block = NULL; }
+    pthread_mutex_unlock(&g->m);
+    if (nb) { iosrt_dispatch_async(nq, nb); _Block_release(nb); }
+}
+long iosrt_dispatch_group_wait(struct rt_group *g, uint64_t timeout) {
+    (void)timeout;
+    pthread_mutex_lock(&g->m); while (g->n > 0) pthread_cond_wait(&g->c, &g->m); pthread_mutex_unlock(&g->m);
+    return 0;
+}
+void iosrt_dispatch_group_notify(struct rt_group *g, struct rt_queue *q, void *block) {
+    pthread_mutex_lock(&g->m);
+    if (g->n == 0) { pthread_mutex_unlock(&g->m); iosrt_dispatch_async(q, block); return; }
+    g->notify_block = _Block_copy(block); g->notify_q = q;
+    pthread_mutex_unlock(&g->m);
+}
+struct grp_item { struct rt_group *g; void *block; };
+static void grp_run(void *p) { struct grp_item *it = p; block_invoke(it->block); _Block_release(it->block); iosrt_dispatch_group_leave(it->g); free(it); }
+void iosrt_dispatch_group_async(struct rt_group *g, struct rt_queue *q, void *block) {
+    iosrt_dispatch_group_enter(g);
+    struct grp_item *it = rt_xmalloc(sizeof *it); it->g = g; it->block = _Block_copy(block);
+    iosrt_dispatch_async_f(q, it, grp_run);
+}
+/* sources: timers and DATA_ADD; others never fire */
+struct rt_source { int kind; struct rt_queue *q; void *handler; void *cancel; uint64_t start, interval; volatile int running, cancelled; unsigned long data; pthread_t t; };
+int iosrt_dispatch_source_type_timer[4], iosrt_dispatch_source_type_data_add[4], iosrt_dispatch_source_type_data_or[4],
+    iosrt_dispatch_source_type_read[4], iosrt_dispatch_source_type_signal[4], iosrt_dispatch_source_type_memorypressure[4];
+void *iosrt_dispatch_source_create(void *type, uintptr_t handle, unsigned long mask, struct rt_queue *q) {
+    (void)handle; (void)mask;
+    struct rt_source *s = rt_xcalloc(1, sizeof *s);
+    s->kind = type == iosrt_dispatch_source_type_timer ? 1 : (type == iosrt_dispatch_source_type_data_add || type == iosrt_dispatch_source_type_data_or) ? 2 : 0;
+    s->q = q ? q : &iosrt_dispatch_main_q;
+    return s;
+}
+void iosrt_dispatch_source_set_event_handler(struct rt_source *s, void *b) { if (s->handler) _Block_release(s->handler); s->handler = b ? _Block_copy(b) : NULL; }
+void iosrt_dispatch_source_set_cancel_handler(struct rt_source *s, void *b) { s->cancel = b ? _Block_copy(b) : NULL; }
+void iosrt_dispatch_source_set_timer(struct rt_source *s, uint64_t start, uint64_t interval, uint64_t leeway) { (void)leeway; s->start = start; s->interval = interval; }
+static void *timer_thread(void *p) {
+    struct rt_source *s = p;
+    uint64_t next = s->start == 0 ? iosrt_mach_absolute_time() : s->start;
+    while (!s->cancelled) {
+        uint64_t now = iosrt_mach_absolute_time();
+        if (now < next) { uint64_t d = next - now; if (d > 50000000ULL) d = 50000000ULL; struct timespec ts = { 0, (long)d }; nanosleep(&ts, NULL); continue; }
+        if (s->handler && !s->cancelled) iosrt_dispatch_async(s->q, s->handler);
+        if (s->interval == 0 || s->interval == ~0ULL) break;
+        next += s->interval;
+    }
+    return NULL;
+}
+void iosrt_dispatch_source_resume(struct rt_source *s) {
+    if (s->running) return;
+    s->running = 1;
+    if (s->kind == 1) { pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED); pthread_create(&s->t, &a, timer_thread, s); pthread_attr_destroy(&a); }
+}
+void iosrt_dispatch_resume(void *o) {
+    /* sources are the only resumable objects we model */
+    struct rt_source *s = o;
+    if (s && (s->kind == 1 || s->kind == 2) && !s->running) iosrt_dispatch_source_resume(s);
+}
+void iosrt_dispatch_source_merge_data(struct rt_source *s, unsigned long v) {
+    s->data += v;
+    if (s->handler && s->running) iosrt_dispatch_async(s->q, s->handler);
+}
+unsigned long iosrt_dispatch_source_get_data(struct rt_source *s) { unsigned long d = s->data; s->data = 0; return d; }
+void iosrt_dispatch_source_cancel(struct rt_source *s) { s->cancelled = 1; if (s->cancel) iosrt_dispatch_async(s->q, s->cancel); }
+long iosrt_dispatch_source_testcancel(struct rt_source *s) { return s->cancelled; }
+/* pthread rwlocks with the Darwin static initializer */
+#define DARWIN_RWLOCK_SIG_INIT 0x2DA8B3B4L
+static void rw_fix(pthread_rwlock_t *l) {
+    long sig; memcpy(&sig, l, sizeof sig);
+    if (sig != DARWIN_RWLOCK_SIG_INIT) return;
+    pthread_mutex_lock(&lazy_lock); memcpy(&sig, l, sizeof sig);
+    if (sig == DARWIN_RWLOCK_SIG_INIT) pthread_rwlock_init(l, NULL);
+    pthread_mutex_unlock(&lazy_lock);
+}
+int iosrt_pthread_rwlock_rdlock(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_rdlock(l); }
+int iosrt_pthread_rwlock_wrlock(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_wrlock(l); }
+int iosrt_pthread_rwlock_tryrdlock(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_tryrdlock(l); }
+int iosrt_pthread_rwlock_trywrlock(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_trywrlock(l); }
+int iosrt_pthread_rwlock_unlock(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_unlock(l); }
+int iosrt_pthread_rwlock_destroy(pthread_rwlock_t *l) { rw_fix(l); return pthread_rwlock_destroy(l); }
+
+static int once_begin2(long *pred) { return once_begin(pred); }

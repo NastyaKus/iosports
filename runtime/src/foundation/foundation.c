@@ -261,7 +261,8 @@ static void s_dealloc(id self, SEL s) {
 static unsigned long s_length(id self, SEL s) { (void)s; struct sv v; sv_get(self, &v); size_t n = v.len; sv_free(&v); return n; }
 static unsigned long s_characterAtIndex(id self, SEL s, unsigned long i) {
     (void)s; struct sv v; sv_get(self, &v);
-    if (i >= v.len) { sv_free(&v); rt_guest_exit(73, "-[NSString characterAtIndex:]: Range or index out of bounds"); }
+    void rt_soft_error(const char *msg);
+    if (i >= v.len) { sv_free(&v); rt_soft_error("-[NSString characterAtIndex:]: Range or index out of bounds"); return 0; }
     unichar c = sv_at(&v, i); sv_free(&v); return c;
 }
 static void s_getCharacters(id self, SEL s, unichar *buf, NSRange r) { (void)s; struct sv v; sv_get(self, &v); for (size_t i = 0; i < r.length && r.location + i < v.len; i++) buf[i] = sv_at(&v, r.location + i); sv_free(&v); }
@@ -634,6 +635,8 @@ void rt_foundation_init(void) {
     IM(n, "longLongValue", n_llValue); IM(n, "unsignedIntegerValue", n_llValue); IM(n, "unsignedIntValue", n_intValue);
     IM(n, "doubleValue", n_doubleValue); IM(n, "floatValue", n_floatValue); IM(n, "boolValue", n_boolValue);
     IM(n, "charValue", n_charValue); IM(n, "objCType", n_objCType);
+    IM(n, "unsignedLongLongValue", n_llValue); IM(n, "unsignedLongValue", n_llValue); IM(n, "shortValue", n_intValue);
+    IM(n, "unsignedShortValue", n_intValue); IM(n, "unsignedCharValue", n_charValue);
     IM(n, "stringValue", n_stringValue); IM(n, "description", n_stringValue);
     IM(n, "isEqualToNumber:", n_isEqualToNumber); IM(n, "isEqual:", n_isEqualToNumber); IM(n, "compare:", n_compare);
     IM(n, "hash", n_hash); IM(n, "copyWithZone:", n_copy);
@@ -653,6 +656,12 @@ void rt_foundation_init(void) {
 
     rt_collections_init();
     rt_foundation_misc_init();
+    void rt_foundation_more_init(void);
+    rt_foundation_more_init();
+    void rt_foundation_more2_init(void);
+    rt_foundation_more2_init();
+    void rt_cf_init(void);
+    rt_cf_init();
 }
 
 /* performSelector:withObject:afterDelay: -> NSTimer machinery in misc.c */

@@ -2,6 +2,9 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef int32_t OSStatus;
 typedef uint32_t UInt32;
 typedef int32_t SInt32;
@@ -42,3 +45,6 @@ OSStatus AudioUnitInitialize(AudioUnit u);
 OSStatus AudioUnitUninitialize(AudioUnit u);
 OSStatus AudioOutputUnitStart(AudioUnit u);
 OSStatus AudioOutputUnitStop(AudioUnit u);
+#ifdef __cplusplus
+}
+#endif

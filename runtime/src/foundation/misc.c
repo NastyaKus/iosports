@@ -362,7 +362,11 @@ static id b_pathForResourceDir(id self, SEL s, id name, id type, id sub) {
     id n2 = RT_SEND1(id, sub, "stringByAppendingPathComponent:", id, name);
     return b_pathForResource(self, s, n2, type);
 }
-static id b_URLForResource(id self, SEL s, id name, id ext) { return b_pathForResource(self, s, name, ext); }
+static id b_URLForResource(id self, SEL s, id name, id ext) {
+    id p = b_pathForResource(self, s, name, ext);
+    return p ? RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, p) : NULL;
+}
+static id b_bundleURL(id self, SEL s) { return RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, b_bundlePath(self, s)); }
 static id b_localized(id self, SEL s, id key, id value, id table) {
     (void)s; struct nsbundle *b = (struct nsbundle *)self;
     if (!b->strings) {
@@ -733,7 +737,7 @@ void rt_foundation_misc_init(void) {
     IM(b, "executablePath", b_executablePath);
     IM(b, "infoDictionary", b_info); IM(b, "objectForInfoDictionaryKey:", b_infoKey); IM(b, "bundleIdentifier", b_ident);
     IM(b, "pathForResource:ofType:", b_pathForResource); IM(b, "pathForResource:ofType:inDirectory:", b_pathForResourceDir);
-    IM(b, "URLForResource:withExtension:", b_URLForResource);
+    IM(b, "URLForResource:withExtension:", b_URLForResource); IM(b, "bundleURL", b_bundleURL); IM(b, "resourceURL", b_bundleURL);
     IM(b, "localizedStringForKey:value:table:", b_localized);
 
     NEWCLASS(NSException, o, sizeof(struct nsexc) - sizeof(void *));

@@ -1,5 +1,8 @@
 /* iosrt mini-SDK: minimal stdio declarations (Darwin ABI). */
 #pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <stddef.h>
 #include <stdarg.h>
 typedef struct __sFILE FILE;
@@ -33,3 +36,31 @@ int fseek(FILE *, long, int);
 long ftell(FILE *);
 char *fgets(char *, int, FILE *);
 void perror(const char *);
+#ifdef __cplusplus
+}
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef long fpos_t;
+#define BUFSIZ 1024
+#define FILENAME_MAX 1024
+#define FOPEN_MAX 20
+#define L_tmpnam 1024
+#define TMP_MAX 308915776
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+int vsprintf(char *, const char *, va_list);
+int vscanf(const char *, va_list); int vsscanf(const char *, const char *, va_list); int vfscanf(FILE *, const char *, va_list);
+int scanf(const char *, ...); int fscanf(FILE *, const char *, ...);
+int getc(FILE *); int getchar(void); int putc(int, FILE *); int ungetc(int, FILE *); int fgetc(FILE *);
+char *gets(char *);
+int fgetpos(FILE *, fpos_t *); int fsetpos(FILE *, const fpos_t *);
+void rewind(FILE *); void clearerr(FILE *); int feof(FILE *); int ferror(FILE *);
+FILE *freopen(const char *, const char *, FILE *); FILE *tmpfile(void); char *tmpnam(char *);
+int remove(const char *); int rename(const char *, const char *);
+void setbuf(FILE *, char *); int setvbuf(FILE *, char *, int, size_t);
+#ifdef __cplusplus
+}
+#endif
