@@ -1,18 +1,24 @@
 screen {{0, 0}, {375, 667}}
+shell push MenuController (override sees every push, the root too)
+child panel viewWillAppear (added while its parent is on screen)
 menu appeared, view {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}} (original container inside ShellView)
 menu: push settings
+shell push SettingsController (override sees every push, the root too)
 settings appeared: tableView is view 1, style 1, 2 sections, frame {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}}
   rows {{0, 35}, {335, 44}} {{0, 79}, {335, 44}} {{0, 188}, {335, 44}}
   custom footer view {{0, 232}, {335, 60}}, menu view on screen: 0
 settings: selected 0.0
+shell push DetailController (override sees every push, the root too)
 detail appeared, view {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}}
 detail: back
 settings appeared: tableView is view 1, style 1, 2 sections, frame {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}}
   rows {{0, 35}, {335, 44}} {{0, 79}, {335, 44}} {{0, 188}, {335, 44}}
   custom footer view {{0, 232}, {335, 60}}, menu view on screen: 0
 settings: selected 0.1
+child panel viewWillAppear (added while its parent is on screen)
 menu appeared, view {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}} (original container inside ShellView)
 menu: push settings
+shell push SettingsController (override sees every push, the root too)
 settings appeared: tableView is view 1, style 1, 2 sections, frame {{0, 0}, {335, 627}} in {{20, 20}, {335, 627}}
   rows {{0, 35}, {335, 44}} {{0, 79}, {335, 44}} {{0, 188}, {335, 44}}
   custom footer view {{0, 232}, {335, 60}}, menu view on screen: 0

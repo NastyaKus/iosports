@@ -219,11 +219,27 @@ static id v_subviews(id self, SEL s) { (void)s; view_setup(self); return objc_au
 static id v_superview(id self, SEL s) { (void)s; return V(self)->superview; }
 id rt_view_window(id v) { while (v && !rt_is_kind_of(v, RT_CLASS(UIWindow))) v = V(v)->superview; return v; }
 static id v_window(id self, SEL s) { (void)s; return rt_view_window(self); }
-static void notify_window_change(id v, id win) {
+static void notify_window_change_views(id v, id win) {
     if (rt_responds(v, rt_sel("willMoveToWindow:"))) RT_SEND1(void, v, "willMoveToWindow:", id, win);
     if (rt_responds(v, rt_sel("didMoveToWindow"))) RT_SEND0(void, v, "didMoveToWindow");
     id subs = V(v)->subviews;
-    for (size_t i = 0; subs && i < rt_array_count(subs); i++) notify_window_change(rt_array_at(subs, i), win);
+    for (size_t i = 0; subs && i < rt_array_count(subs); i++) notify_window_change_views(rt_array_at(subs, i), win);
+}
+/* appearance forwarding (iOS 5+): a child controller whose view enters the window while
+   its parent is on screen gets viewWillAppear:/viewDidAppear:, and the reverse on leaving */
+static void appearance_for_window(id v, id win) {
+    struct uiview *uv = V(v);
+    if (uv->vc && ((struct uivc *)uv->vc)->view == v) {
+        id vc = uv->vc, parent = ((struct uivc *)vc)->parent;
+        if (win && parent && ((struct uivc *)parent)->appeared && !((struct uivc *)vc)->appeared) { rt_vc_appear(vc, 1); return; }
+        if (!win && ((struct uivc *)vc)->appeared) { rt_vc_appear(vc, 0); return; }
+    }
+    id subs = uv->subviews;
+    for (size_t i = 0; subs && i < rt_array_count(subs); i++) appearance_for_window(rt_array_at(subs, i), win);
+}
+static void notify_window_change(id v, id win) {
+    notify_window_change_views(v, win);
+    appearance_for_window(v, win);
 }
 void rt_view_remove(id self) {
     struct uiview *v = V(self);
@@ -996,6 +1012,13 @@ static void collect_gestures(id view, id hit) {
         }
     }
 }
+/* Touch "slop": a resting finger on Android produces a stream of ACTION_MOVE events
+   (same or jittering position). iOS reports a stationary finger without touchesMoved,
+   and apps' own gesture logic (tap vs. drag vs. hold) depends on that. Moves are held
+   back until the touch leaves a small radius around where it began; a touch that ends
+   inside it ends where it began. Moves to the same position are never delivered. */
+#define TOUCH_SLOP_PT 2.0
+static CGPoint seq_start; static int seq_left_slop;
 static void deliver_touch(struct touch_ev *e) {
     struct uiapp *a = (struct uiapp *)g_app;
     if (!a || a->ignoring) return;
@@ -1014,6 +1037,7 @@ static void deliver_touch(struct touch_ev *e) {
         seq_touch = rt_alloc_instance(RT_CLASS(UITouch), 0);
         struct uitouch *t = TO(seq_touch);
         t->pt = t->prev = (CGPoint){ e->x, e->y }; t->phase = 0; t->ts = now; t->tapCount = 1; t->window = win; t->tid = e->tid;
+        seq_start = t->pt; seq_left_slop = 0;
         seq_event = rt_alloc_instance(RT_CLASS(UIEvent), 0);
         ((struct uievent *)seq_event)->touches = rt_set_new(&seq_touch, 1); ((struct uievent *)seq_event)->ts = now;
         CGPoint wp = rt_view_convert(NULL, t->pt, win);
@@ -1034,7 +1058,15 @@ static void deliver_touch(struct touch_ev *e) {
     } else {
         if (!seq_touch || !seq_view) return;
         struct uitouch *t = TO(seq_touch);
-        t->prev = t->pt; t->pt = (CGPoint){ e->x, e->y }; t->ts = now; t->phase = e->phase == 1 ? 1 : 3;
+        CGPoint np = { e->x, e->y };
+        if (!seq_left_slop) {
+            if (hypot(np.x - seq_start.x, np.y - seq_start.y) < TOUCH_SLOP_PT) {
+                if (e->phase == 1) return;   /* still resting */
+                np = seq_start;              /* a tap ends where it began */
+            } else seq_left_slop = 1;
+        }
+        if (e->phase == 1 && fabs(np.x - t->pt.x) < 0.01 && fabs(np.y - t->pt.y) < 0.01) return;
+        t->prev = t->pt; t->pt = np; t->ts = now; t->phase = e->phase == 1 ? 1 : 3;
         ((struct uievent *)seq_event)->ts = now;
         id set = rt_set_new(&seq_touch, 1);
         const char *sel = e->phase == 1 ? "touchesMoved:withEvent:" : "touchesEnded:withEvent:";
