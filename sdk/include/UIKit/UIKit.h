@@ -4,6 +4,13 @@
 #include <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/QuartzCore.h>
 @class UIWindow, UIView, UIViewController, UIEvent, UITouch, UIApplication, UIImage, UIGestureRecognizer;
+#ifndef UIKIT_EXTERN
+#ifdef __cplusplus
+#define UIKIT_EXTERN extern "C"
+#else
+#define UIKIT_EXTERN extern
+#endif
+#endif
 typedef NS_ENUM(NSInteger, NSTextAlignment) { NSTextAlignmentLeft = 0, NSTextAlignmentCenter = 1, NSTextAlignmentRight = 2 };
 typedef NS_OPTIONS(NSUInteger, UIControlEvents) { UIControlEventTouchDown = 1 << 0, UIControlEventTouchUpInside = 1 << 6, UIControlEventValueChanged = 1 << 12 };
 typedef NS_OPTIONS(NSUInteger, UIControlState) { UIControlStateNormal = 0, UIControlStateHighlighted = 1 };
@@ -184,8 +191,10 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 @interface UIPanGestureRecognizer : UIGestureRecognizer
 - (CGPoint)translationInView:(UIView *)v;
 @end
+@class UINavigationController;
 @interface UIViewController : UIResponder
 @property (nonatomic, strong) UIView *view;
+@property (readonly) UINavigationController *navigationController;
 @property (nonatomic, copy) NSString *title;
 - (instancetype)initWithNibName:(NSString *)n bundle:(NSBundle *)b;
 - (void)loadView;
@@ -194,6 +203,89 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 - (void)viewDidAppear:(BOOL)a;
 - (void)presentViewController:(UIViewController *)vc animated:(BOOL)a completion:(void (^)(void))c;
 - (void)dismissViewControllerAnimated:(BOOL)a completion:(void (^)(void))c;
+@end
+@interface UINavigationController : UIViewController
+- (instancetype)initWithRootViewController:(UIViewController *)root;
+- (void)pushViewController:(UIViewController *)vc animated:(BOOL)a;
+- (UIViewController *)popViewControllerAnimated:(BOOL)a;
+- (NSArray<UIViewController *> *)popToRootViewControllerAnimated:(BOOL)a;
+@property (readonly) UIViewController *topViewController;
+@property (nonatomic, copy) NSArray<UIViewController *> *viewControllers;
+@property (nonatomic, getter=isNavigationBarHidden) BOOL navigationBarHidden;
+@end
+typedef NS_ENUM(NSInteger, UITableViewStyle) { UITableViewStylePlain = 0, UITableViewStyleGrouped = 1 };
+typedef NS_ENUM(NSInteger, UITableViewCellStyle) { UITableViewCellStyleDefault = 0, UITableViewCellStyleValue1 = 1, UITableViewCellStyleValue2 = 2, UITableViewCellStyleSubtitle = 3 };
+@interface NSIndexPath (UITableView)
++ (instancetype)indexPathForRow:(NSInteger)row inSection:(NSInteger)section;
+@property (readonly) NSInteger section;
+@property (readonly) NSInteger row;
+@end
+UIKIT_EXTERN const CGFloat UITableViewAutomaticDimension;
+@class UITableView;
+@interface UITableViewCell : UIView
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid;
+@property (readonly) UILabel *textLabel;
+@property (readonly) UILabel *detailTextLabel;
+@property (readonly) UIView *contentView;
+@end
+@protocol UITableViewDataSource <NSObject>
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section;
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip;
+@optional
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv;
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section;
+- (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section;
+@end
+@protocol UITableViewDelegate <UIScrollViewDelegate>
+@optional
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip;
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section;
+- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section;
+- (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)section;
+- (UIView *)tableView:(UITableView *)tv viewForFooterInSection:(NSInteger)section;
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip;
+@end
+@interface UITableView : UIScrollView
+- (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style;
+@property (readonly) UITableViewStyle style;
+@property (nonatomic, weak) id<UITableViewDataSource> dataSource;
+@property (nonatomic, weak) id<UITableViewDelegate> delegate;
+@property (readonly) NSInteger numberOfSections;
+@property (nonatomic) CGFloat rowHeight;
+@property (nonatomic, strong) UIView *backgroundView;
+- (NSInteger)numberOfRowsInSection:(NSInteger)section;
+- (CGRect)rectForRowAtIndexPath:(NSIndexPath *)ip;
+- (UITableViewCell *)dequeueReusableCellWithIdentifier:(NSString *)rid;
+- (UITableViewCell *)cellForRowAtIndexPath:(NSIndexPath *)ip;
+- (void)reloadData;
+@end
+@interface UITableViewController : UIViewController <UITableViewDataSource, UITableViewDelegate>
+- (instancetype)initWithStyle:(UITableViewStyle)style;
+@property (nonatomic, strong) UITableView *tableView;
+@property (nonatomic) BOOL clearsSelectionOnViewWillAppear;
+@end
+typedef NS_ENUM(NSInteger, UIWebViewNavigationType) { UIWebViewNavigationTypeLinkClicked = 0, UIWebViewNavigationTypeFormSubmitted, UIWebViewNavigationTypeBackForward,
+    UIWebViewNavigationTypeReload, UIWebViewNavigationTypeFormResubmitted, UIWebViewNavigationTypeOther };
+@class UIWebView;
+@protocol UIWebViewDelegate <NSObject>
+@optional
+- (BOOL)webView:(UIWebView *)webView shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(UIWebViewNavigationType)type;
+- (void)webViewDidStartLoad:(UIWebView *)webView;
+- (void)webViewDidFinishLoad:(UIWebView *)webView;
+- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error;
+@end
+@interface UIWebView : UIView
+@property (nonatomic, weak) id<UIWebViewDelegate> delegate;
+@property (readonly, strong) UIScrollView *scrollView;
+@property (readonly, strong) NSURLRequest *request;
+@property (readonly, getter=canGoBack) BOOL canGoBack;
+@property (readonly, getter=isLoading) BOOL loading;
+@property (nonatomic) BOOL scalesPageToFit;
+- (void)loadRequest:(NSURLRequest *)request;
+- (void)loadHTMLString:(NSString *)html baseURL:(NSURL *)base;
+- (void)goBack;
+- (void)reload;
+- (NSString *)stringByEvaluatingJavaScriptFromString:(NSString *)js;
 @end
 @interface UIAlertAction : NSObject
 + (instancetype)actionWithTitle:(NSString *)t style:(UIAlertActionStyle)s handler:(void (^)(UIAlertAction *a))h;

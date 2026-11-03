@@ -597,6 +597,23 @@ static id str_stringWithContentsOfFileUsed(Class c, SEL s, id path, unsigned lon
     (void)s; if (enc) *enc = 4;
     return ((id (*)(id, SEL, id, unsigned long, id *))objc_msgSend)((id)c, rt_sel("stringWithContentsOfFile:encoding:error:"), path, 4, err);
 }
+/* URL variants: file URLs read the file, anything else is offline */
+static id url_file_path(id url) {
+    if (!url || !(RT_SEND0(long, url, "isFileURL") & 0xff)) return NULL;
+    id p = RT_SEND0(id, url, "path");
+    id d = p ? RT_SEND0(id, p, "stringByRemovingPercentEncoding") : NULL;
+    return d ? d : p;
+}
+static id str_withContentsOfURL(Class c, SEL s, id url, unsigned long enc, id *err) {
+    (void)s; id path = url_file_path(url);
+    if (!path) { if (err) *err = RT_SEND3(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSURLErrorDomain"), long, -1009, id, NULL); return NULL; }
+    return ((id (*)(id, SEL, id, unsigned long, id *))objc_msgSend)((id)c, rt_sel("stringWithContentsOfFile:encoding:error:"), path, enc, err);
+}
+static id str_withContentsOfURLUsed(Class c, SEL s, id url, unsigned long *enc, id *err) { if (enc) *enc = 4; return str_withContentsOfURL(c, s, url, 4, err); }
+static id str_initWithContentsOfURL(id self, SEL s, id url, unsigned long enc, id *err) {
+    objc_release(self); return objc_retain(str_withContentsOfURL(RT_CLASS(NSString), s, url, enc, err));
+}
+static id str_initWithContentsOfURLUsed(id self, SEL s, id url, unsigned long *enc, id *err) { if (enc) *enc = 4; return str_initWithContentsOfURL(self, s, url, 4, err); }
 static id date_copy(id self, SEL s, void *z) { return self_copy(self, s, z); }
 static id date_earlier(id self, SEL s, id o) { (void)s; return date_ref(self) <= date_ref(o) ? self : o; }
 static id date_later(id self, SEL s, id o) { (void)s; return date_ref(self) >= date_ref(o) ? self : o; }
@@ -858,6 +875,8 @@ void rt_foundation_more2_init(void) {
     IM(st, "lengthOfBytesUsingEncoding:", str_lengthOfBytesUTF8); IM(st, "localizedCaseInsensitiveCompare:", str_localizedCaseInsensitiveCompare);
     IM(st, "initWithData:encoding:", str_initWithData); IM(st, "initWithContentsOfFile:encoding:error:", str_initWithContentsOfFile);
     CM(st, "stringWithContentsOfFile:usedEncoding:error:", str_stringWithContentsOfFileUsed);
+    CM(st, "stringWithContentsOfURL:encoding:error:", str_withContentsOfURL); CM(st, "stringWithContentsOfURL:usedEncoding:error:", str_withContentsOfURLUsed);
+    IM(st, "initWithContentsOfURL:encoding:error:", str_initWithContentsOfURL); IM(st, "initWithContentsOfURL:usedEncoding:error:", str_initWithContentsOfURLUsed);
     Class dt = RT_CLASS(NSDate);
     IM(dt, "copyWithZone:", date_copy); IM(dt, "earlierDate:", date_earlier); IM(dt, "laterDate:", date_later);
     IM(dt, "isEqual:", date_isEqual); IM(dt, "isEqualToDate:", date_isEqual); IM(dt, "hash", date_hash);

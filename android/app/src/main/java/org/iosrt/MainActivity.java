@@ -42,10 +42,11 @@ public class MainActivity extends Activity {
 
     private void refresh() {
         list.removeAllViews();
-        title("iosrt — iOS (arm64 Mach-O) compatibility runtime, stage 1");
+        title("iosrt — iOS (arm64 Mach-O) compatibility runtime, stage 2");
         note("Runs iOS app code natively on arm64: own Mach-O loader, Objective-C runtime and "
-                + "HLE Foundation / UIKit-lite / AudioToolbox. Real App Store apps need far more APIs "
-                + "than stage 1 provides: use \"Compatibility report\" to see what is missing.");
+                + "HLE Foundation / UIKit / CoreGraphics / QuartzCore / AudioToolbox, NIB loading and a "
+                + "software renderer. Missing APIs return 0/nil and are logged; \"Compatibility report\" "
+                + "lists them.");
         File last = new File(getFilesDir(), "last_exit.txt");
         if (last.exists()) note("Last run: " + readText(last).trim());
         title("Bundled demo apps (built from source with the iosrt mini-SDK)");

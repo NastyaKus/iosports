@@ -9,7 +9,8 @@ root = pathlib.Path(__file__).resolve().parent.parent
 src = root / "runtime/src/uikit"
 out = root / "runtime/src/exports/uikit.def"
 PRIVATE_CLASSES = {"UIButtonContent", "UINibDecoder", "UIRuntimeConnection", "UIRuntimeOutletConnection",
-                   "UIRuntimeEventConnection", "UIRuntimeOutletCollectionConnection", "UIProxyObject"}
+                   "UIRuntimeEventConnection", "UIRuntimeOutletCollectionConnection", "UIProxyObject",
+                   "UIWebBrowserView"}
 
 def lib_for(name):
     n = name.lstrip("k")

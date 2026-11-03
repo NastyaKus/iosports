@@ -367,6 +367,71 @@ static id b_URLForResource(id self, SEL s, id name, id ext) {
     id p = b_pathForResource(self, s, name, ext);
     return p ? RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, p) : NULL;
 }
+static id b_URLForResourceSub(id self, SEL s, id name, id ext, id sub) {
+    id p = b_pathForResourceDir(self, s, name, ext, sub);
+    return p ? RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, p) : NULL;
+}
+static id b_URLForResourceSubLoc(id self, SEL s, id name, id ext, id sub, id loc) {
+    (void)loc; return b_URLForResourceSub(self, s, name, ext, sub);
+}
+static id b_pathForResourceDirLoc(id self, SEL s, id name, id type, id sub, id loc) {
+    (void)loc; return b_pathForResourceDir(self, s, name, type, sub);
+}
+/* the *.lproj directories of the bundle, "en" first when present */
+static id b_localizations(id self, SEL s) {
+    (void)s; id out = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableArray"), "alloc"), "init");
+    DIR *d = opendir(rt_str_utf8(((struct nsbundle *)self)->path));
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (n > 6 && !strcmp(e->d_name + n - 6, ".lproj")) {
+            char nm[256]; snprintf(nm, sizeof nm, "%.*s", (int)(n - 6), e->d_name);
+            id str = rt_str(nm);
+            if (!strcmp(nm, "en")) RT_SEND2(void, out, "insertObject:atIndex:", id, str, unsigned long, 0);
+            else RT_SEND1(void, out, "addObject:", id, str);
+        }
+    }
+    if (d) closedir(d);
+    return objc_autorelease(out);
+}
+static id b_devLocalization(id self, SEL s) {
+    id dev = RT_SEND1(id, self, "objectForInfoDictionaryKey:", id, rt_str("CFBundleDevelopmentRegion"));
+    if (dev) return dev;
+    id locs = b_localizations(self, s);
+    return RT_SEND0(unsigned long, locs, "count") ? RT_SEND1(id, locs, "objectAtIndex:", unsigned long, 0) : rt_str("en");
+}
+/* never empty, like iOS: the best match is English, else the development region */
+static id b_preferredLocalizations(id self, SEL s) {
+    id locs = b_localizations(self, s);
+    id best = RT_SEND1(long, locs, "containsObject:", id, rt_str("en")) & 0xff ? rt_str("en") : b_devLocalization(self, s);
+    return RT_SEND1(id, (id)rt_class_named("NSArray"), "arrayWithObject:", id, best);
+}
+static id b_pathsOfType(id self, SEL s, id type, id sub) {
+    (void)s; id out = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableArray"), "alloc"), "init");
+    const char *base = rt_str_utf8(((struct nsbundle *)self)->path);
+    const char *ext = type && RT_SEND0(unsigned long, type, "length") ? rt_str_utf8(type) : NULL;
+    const char *subs[] = { "", "Base.lproj/", "en.lproj/", NULL };
+    for (int i = 0; subs[i]; i++) {
+        char dir[4200]; snprintf(dir, sizeof dir, "%s/%s%s", base, subs[i], sub ? rt_str_utf8(sub) : "");
+        DIR *d = opendir(dir); struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (e->d_name[0] == '.') continue;
+            const char *dot = strrchr(e->d_name, '.');
+            if (ext && (!dot || strcmp(dot + 1, ext))) continue;
+            char p[4500]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+            RT_SEND1(void, out, "addObject:", id, rt_str(p));
+        }
+        if (d) closedir(d);
+    }
+    return objc_autorelease(out);
+}
+static id b_URLsOfType(id self, SEL s, id ext, id sub) {
+    id paths = b_pathsOfType(self, s, ext, sub);
+    id out = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableArray"), "alloc"), "init");
+    unsigned long n = RT_SEND0(unsigned long, paths, "count");
+    for (unsigned long i = 0; i < n; i++) RT_SEND1(void, out, "addObject:", id, RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, RT_SEND1(id, paths, "objectAtIndex:", unsigned long, i)));
+    return objc_autorelease(out);
+}
 static id b_bundleURL(id self, SEL s) { return RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, b_bundlePath(self, s)); }
 static id b_localized(id self, SEL s, id key, id value, id table) {
     (void)s; struct nsbundle *b = (struct nsbundle *)self;
@@ -953,6 +1018,12 @@ void rt_foundation_misc_init(void) {
     IM(b, "pathForResource:ofType:", b_pathForResource); IM(b, "pathForResource:ofType:inDirectory:", b_pathForResourceDir);
     IM(b, "URLForResource:withExtension:", b_URLForResource); IM(b, "bundleURL", b_bundleURL); IM(b, "resourceURL", b_bundleURL);
     IM(b, "localizedStringForKey:value:table:", b_localized);
+    IM(b, "URLForResource:withExtension:subdirectory:", b_URLForResourceSub);
+    IM(b, "URLForResource:withExtension:subdirectory:localization:", b_URLForResourceSubLoc);
+    IM(b, "pathForResource:ofType:inDirectory:forLocalization:", b_pathForResourceDirLoc);
+    IM(b, "pathsForResourcesOfType:inDirectory:", b_pathsOfType); IM(b, "URLsForResourcesWithExtension:subdirectory:", b_URLsOfType);
+    IM(b, "localizations", b_localizations); IM(b, "preferredLocalizations", b_preferredLocalizations);
+    IM(b, "developmentLocalization", b_devLocalization);
 
     NEWCLASS(NSException, o, sizeof(struct nsexc) - sizeof(void *));
     Class ex = RT_CLASS(NSException);

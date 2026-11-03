@@ -155,6 +155,9 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
     const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
     const char *home = (*env)->GetStringUTFChars(env, jhome, NULL);
     setenv("IOSRT_HOME", home, 1);
+    /* the shell runs apps leniently: missing APIs return 0/nil and Foundation's
+       recoverable errors are logged instead of ending the app (tests use strict mode) */
+    setenv("IOSRT_STRICT", "0", 0);
     iosrt_set_screen(w, h, scale);
     char *p = rt_xstrdup(path);
     char *argv[2] = { p, NULL };
@@ -165,6 +168,6 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
 }
 
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeTouch(JNIEnv *env, jclass cls, jint phase, jfloat x, jfloat y) {
-    (void)env; (void)cls; void iosrt_push_touch_px(int, int, float, float); iosrt_push_touch_px(0, phase, x, y);
+    (void)env; (void)cls; void rt_push_touch_px(int, int, float, float); rt_push_touch_px(0, phase, x, y);
 }
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeQuit(JNIEnv *env, jclass cls) { (void)env; (void)cls; iosrt_request_quit(); }

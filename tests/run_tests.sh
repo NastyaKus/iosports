@@ -31,6 +31,10 @@ cat > "$S/NibDemo.app/Info.plist" <<PL
 <plist version="1.0"><dict><key>CFBundleExecutable</key><string>NibDemo</string>
 <key>CFBundleIdentifier</key><string>org.iosrt.nibdemo</string><key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
+app "$S/nav_demo" 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -framework CoreGraphics
+rm -rf "$S/Web.app"; mkdir -p "$S/Web.app"
+app "$S/Web.app/Web" 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tests/make_web_bundle.py" "$S/Web.app"
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -76,6 +80,14 @@ for flavor in linux-aarch64 android-arm64; do
     $R "$S/graphics_demo" >"$T/out.txt" 2>&1; rc=$?
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen \|Gradient stops\|^clear$\|(transformed)' "$T/out.txt" >"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/graphics_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q '^image ' "$T/out.txt"; then ok "graphics_demo (CG/CA drawing, scroll paging, gestures, controls, alert)"; else ko "graphics_demo rc=$rc" "$T/diff.txt"; fi
+  # 3c. navigation in a custom container, UITableViewController, section footers
+  IOSRT_HEADLESS_FRAMES=18 IOSRT_SCRIPT="3:tap:187,145;6:tap:187,77;9:tap:187,145;12:tap:187,121;15:tap:187,145" \
+    $R "$S/nav_demo" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen [0-9]' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/nav_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q 'Footer text explaining' "$T/out.txt"; then ok "nav_demo (custom nav container, UITableViewController, section footers)"; else ko "nav_demo rc=$rc" "$T/diff.txt"; fi
+  # 3d. UIWebView with bundled pages: CSS subset, links via the delegate, unknown schemes, goBack
+  IOSRT_HEADLESS_FRAMES=14 IOSRT_SCRIPT="3:tap:80,150;5:tap:80,196;7:tap:80,104" $R "$S/Web.app" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/web_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "web_demo (bundled HTML/CSS pages, link navigation, back list)"; else ko "web_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

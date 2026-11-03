@@ -468,10 +468,68 @@ static id url_make(Class c, const char *s, int file) {
     return o;
 }
 static id u_withString(Class c, SEL s, id str) { (void)s; if (!str) return NULL; return objc_autorelease(url_make(c, rt_str_utf8(str), 0)); }
+/* RFC 3986 reference resolution (section 5.2), malloc'd result */
+static int has_scheme(const char *r) {
+    if (!((*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z'))) return 0;
+    for (const char *p = r + 1; *p; p++) {
+        if (*p == ':') return 1;
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '+' || *p == '-' || *p == '.')) return 0;
+    }
+    return 0;
+}
+static void remove_dot_segments(char *path) {
+    char *out = malloc(strlen(path) + 2), *o = out; const char *in = path;
+    *o = 0;
+    while (*in) {
+        if (!strncmp(in, "../", 3)) in += 3;
+        else if (!strncmp(in, "./", 2)) in += 2;
+        else if (!strncmp(in, "/./", 3)) in += 2;
+        else if (!strcmp(in, "/.")) { in = "/"; }
+        else if (!strncmp(in, "/../", 4) || !strcmp(in, "/..")) {
+            in = in[3] ? in + 3 : "/";
+            char *sl = strrchr(out, '/'); if (sl) { o = sl; *o = 0; } else { o = out; *o = 0; }
+        } else if (!strcmp(in, ".") || !strcmp(in, "..")) in += strlen(in);
+        else {
+            const char *start = in; if (*in == '/') in++;
+            while (*in && *in != '/') in++;
+            size_t n = (size_t)(in - start); memcpy(o, start, n); o += n; *o = 0;
+        }
+    }
+    strcpy(path, out); free(out);
+}
+char *rt_url_resolve(const char *base, const char *ref) {
+    size_t cap = strlen(base) + strlen(ref) + 8; char *r = malloc(cap);
+    if (has_scheme(ref) || !*base) { strcpy(r, ref); return r; }
+    const char *bs = strchr(base, ':'); size_t slen = bs ? (size_t)(bs - base) + 1 : 0;    /* "scheme:" */
+    const char *rest = base + slen;
+    size_t alen = 0;                                                                       /* "//authority" */
+    if (!strncmp(rest, "//", 2)) alen = 2 + strcspn(rest + 2, "/?#");
+    const char *bpath = rest + alen; size_t plen = strcspn(bpath, "?#");
+    if (!strncmp(ref, "//", 2)) { snprintf(r, cap, "%.*s%s", (int)slen, base, ref); return r; }
+    if (*ref == '#' ) { size_t n = strcspn(base, "#"); snprintf(r, cap, "%.*s%s", (int)n, base, ref); return r; }
+    if (*ref == '?') { snprintf(r, cap, "%.*s%s", (int)(slen + alen + plen), base, ref); return r; }
+    char *path = malloc(plen + strlen(ref) + 4);
+    if (*ref == '/') strcpy(path, ref);
+    else {
+        const char *sl = NULL; for (size_t i = 0; i < plen; i++) if (bpath[i] == '/') sl = bpath + i;
+        size_t keep = sl ? (size_t)(sl - bpath) + 1 : 0;
+        if (!keep && alen) { path[0] = '/'; keep = 1; }   /* "http://host" + "a" -> "/a" */
+        else memcpy(path, bpath, keep);
+        strcpy(path + keep, ref);
+    }
+    /* split off query/fragment before normalizing the path */
+    size_t pl = strcspn(path, "?#"); char tail[2048]; snprintf(tail, sizeof tail, "%s", path + pl); path[pl] = 0;
+    remove_dot_segments(path);
+    snprintf(r, cap, "%.*s%s%s", (int)(slen + alen), base, path, tail);
+    free(path);
+    return r;
+}
 static id u_withStringRel(Class c, SEL s, id str, id base) {
-    if (!base || strstr(rt_str_utf8(str), "://")) return u_withString(c, s, str);
-    char b[4200]; snprintf(b, sizeof b, "%s%s", rt_str_utf8(((struct nsurl *)base)->str), rt_str_utf8(str));
-    return objc_autorelease(url_make(c, b, 0));
+    if (!str) return NULL;
+    if (!base) return u_withString(c, s, str);
+    char *abs = rt_url_resolve(rt_str_utf8(((struct nsurl *)base)->str), rt_str_utf8(str));
+    id r = objc_autorelease(url_make(c, abs, 0)); free(abs);
+    return r;
 }
 static id u_fileURL(Class c, SEL s, id path) { (void)s; if (!path) return NULL; return objc_autorelease(url_make(c, rt_str_utf8(path), 1)); }
 static id u_fileURLDir(Class c, SEL s, id path, long isdir) { (void)isdir; return u_fileURL(c, s, path); }

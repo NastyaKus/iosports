@@ -25,6 +25,9 @@ mkapp "Counter (UIKit)" Counter org.iosrt.sample.counter 12.0 "$root/samples/uik
 mkapp "Graphics Demo" GraphicsDemo org.iosrt.sample.graphics 12.0 "$root/samples/graphics_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore
 mkapp "NIB Demo" NibDemo org.iosrt.sample.nib 12.0 "$root/samples/nib_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tools/mknib.py" "$out/NIB Demo.app/Main.nib"
+mkapp "Navigation Demo" NavDemo org.iosrt.sample.nav 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -framework CoreGraphics
+mkapp "Web Demo" Web org.iosrt.sample.web 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tests/make_web_bundle.py" "$out/Web Demo.app"
 mkapp "ObjC Tour" ObjCTour org.iosrt.sample.objc 10.0 "$root/samples/objc_basics/main.m" $F
 mkapp "Hello C" HelloC org.iosrt.sample.helloc 10.0 "$root/samples/hello_c/main.c"
 mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation

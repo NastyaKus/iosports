@@ -269,6 +269,13 @@ static void ma_removeIdentical(id self, SEL s, id o) {
     struct nsarr *a = (struct nsarr *)self;
     for (size_t i = a->n; i-- > 0;) if (a->items[i] == o) ma_removeAt(self, s, i);
 }
+static void ma_removeAll(id self, SEL s);
+static void ma_removeObjectsInArray(id self, SEL s, id other) {
+    if (!other) return;
+    if (other == self) { ma_removeAll(self, s); return; }
+    unsigned long n = RT_SEND0(unsigned long, other, "count");
+    for (unsigned long j = 0; j < n; j++) ma_removeObject(self, s, RT_SEND1(id, other, "objectAtIndex:", unsigned long, j));
+}
 static unsigned long a_indexIdentical(id self, SEL s, id o) {
     (void)s; struct nsarr *a = (struct nsarr *)self;
     for (size_t i = 0; i < a->n; i++) if (a->items[i] == o) return i;
@@ -461,7 +468,7 @@ void rt_collections_init(void) {
     IM(a, "valueForKey:", a_valueForKey);
     CM(ma, "arrayWithCapacity:", ma_withCapacity); IM(ma, "initWithCapacity:", ma_initWithCapacity);
     IM(ma, "addObject:", ma_add); IM(ma, "insertObject:atIndex:", ma_insert); IM(ma, "removeObjectAtIndex:", ma_removeAt);
-    IM(ma, "removeLastObject", ma_removeLast); IM(ma, "removeFirstObject", ma_removeFirst); IM(ma, "removeObject:", ma_removeObject); IM(ma, "removeObjectIdenticalTo:", ma_removeIdentical);
+    IM(ma, "removeLastObject", ma_removeLast); IM(ma, "removeFirstObject", ma_removeFirst); IM(ma, "removeObject:", ma_removeObject); IM(ma, "removeObjectIdenticalTo:", ma_removeIdentical); IM(ma, "removeObjectsInArray:", ma_removeObjectsInArray);
     IM(ma, "removeAllObjects", ma_removeAll); IM(ma, "replaceObjectAtIndex:withObject:", ma_replace);
     IM(ma, "setObject:atIndexedSubscript:", ma_setAtIndexed); IM(ma, "addObjectsFromArray:", ma_addArray);
     IM(ma, "exchangeObjectAtIndex:withObjectAtIndex:", ma_exchange);

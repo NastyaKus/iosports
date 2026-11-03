@@ -260,6 +260,27 @@ __attribute__((objc_root_class))
 @property (readonly) NSTimeInterval systemUptime;
 @property (readonly) NSUInteger processorCount;
 @end
+@interface NSURL : NSObject <NSCopying>
++ (instancetype)URLWithString:(NSString *)s;
++ (instancetype)URLWithString:(NSString *)s relativeToURL:(NSURL *)base;
++ (instancetype)fileURLWithPath:(NSString *)path;
+@property (readonly, copy) NSString *absoluteString;
+@property (readonly, copy) NSString *scheme;
+@property (readonly, copy) NSString *host;
+@property (readonly, copy) NSString *path;
+@property (readonly, copy) NSString *lastPathComponent;
+@property (readonly, getter=isFileURL) BOOL fileURL;
+@end
+@interface NSURLRequest : NSObject <NSCopying>
++ (instancetype)requestWithURL:(NSURL *)url;
+@property (readonly, copy) NSURL *URL;
+@end
+@interface NSError : NSObject <NSCopying>
++ (instancetype)errorWithDomain:(NSString *)domain code:(NSInteger)code userInfo:(NSDictionary *)info;
+@property (readonly, copy) NSString *domain;
+@property (readonly) NSInteger code;
+@property (readonly, copy) NSString *localizedDescription;
+@end
 @interface NSBundle : NSObject
 + (NSBundle *)mainBundle;
 @property (readonly, copy) NSString *bundlePath;
@@ -268,6 +289,11 @@ __attribute__((objc_root_class))
 @property (readonly, copy) NSDictionary *infoDictionary;
 - (id)objectForInfoDictionaryKey:(NSString *)k;
 - (NSString *)pathForResource:(NSString *)name ofType:(NSString *)ext;
+- (NSString *)pathForResource:(NSString *)name ofType:(NSString *)ext inDirectory:(NSString *)dir;
+- (NSURL *)URLForResource:(NSString *)name withExtension:(NSString *)ext;
+- (NSURL *)URLForResource:(NSString *)name withExtension:(NSString *)ext subdirectory:(NSString *)dir;
+@property (readonly, copy) NSArray<NSString *> *localizations;
+@property (readonly, copy) NSArray<NSString *> *preferredLocalizations;
 - (NSString *)localizedStringForKey:(NSString *)k value:(NSString *)v table:(NSString *)t;
 @end
 #define NSLocalizedString(key, comment) [[NSBundle mainBundle] localizedStringForKey:(key) value:@"" table:nil]
@@ -325,6 +351,11 @@ __attribute__((objc_root_class))
 - (void)postNotificationName:(NSString *)n object:(id)obj;
 - (void)postNotificationName:(NSString *)n object:(id)obj userInfo:(NSDictionary *)u;
 - (void)removeObserver:(id)o;
+@end
+@interface NSIndexPath : NSObject <NSCopying>
++ (instancetype)indexPathWithIndex:(NSUInteger)index;
+@property (readonly) NSUInteger length;
+- (NSUInteger)indexAtPosition:(NSUInteger)position;
 @end
 @interface NSAutoreleasePool : NSObject
 - (void)drain;
