@@ -337,11 +337,12 @@ struct conn { Class isa; id label, source, dest; long mask; };
 #define CN(x) ((struct conn *)(x))
 static id conn_initWithCoder(id self, SEL s, id coder) {
     (void)s; struct conn *c = CN(self);
-    c->label = objc_retain(nc_decodeObject(coder, NULL, rt_str("UILabel")));
-    c->source = nc_decodeObject(coder, NULL, rt_str("UISource"));
-    c->dest = nc_decodeObject(coder, NULL, rt_str("UIDestination"));
-    if (!c->dest) c->dest = nc_decodeObject(coder, NULL, rt_str("UIDestinations"));
-    c->mask = nc_decodeInteger(coder, NULL, rt_str("UIEventMask"));
+    /* through messages: the coder is a UINibDecoder or a keyed unarchiver (old nibs) */
+    c->label = objc_retain(RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UILabel")));
+    c->source = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UISource"));
+    c->dest = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UIDestination"));
+    if (!c->dest) c->dest = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UIDestinations"));
+    c->mask = RT_SEND1(long, coder, "decodeIntegerForKey:", id, rt_str("UIEventMask"));
     objc_retain(c->source); objc_retain(c->dest);
     return self;
 }
@@ -368,18 +369,24 @@ static uint8_t *read_file(const char *path, size_t *len) {
     if (b && fread(b, 1, (size_t)n, f) != (size_t)n) { free(b); b = NULL; }
     fclose(f); *len = b ? (size_t)n : 0; return b;
 }
+/* the archive-independent part: root_coder answers decodeObjectForKey: for the UINib* keys,
+   `all` collects every object decoded from the archive */
+static id instantiate_from(id root_coder, id all, id owner);
 static id instantiate(struct nibfile *nf, id owner, id external) {
     nf->owner = owner; nf->external = external;
-    id root_coder = make_coder(nf, 0);
-    id top = nc_decodeObject(root_coder, NULL, rt_str("UINibTopLevelObjectsKey"));
-    nc_decodeObject(root_coder, NULL, rt_str("UINibObjectsKey"));
-    id conns = nc_decodeObject(root_coder, NULL, rt_str("UINibConnectionsKey"));
+    return instantiate_from(make_coder(nf, 0), nf->all, owner);
+}
+static id instantiate_from(id root_coder, id all, id owner) {
+    #define ROOT(k) RT_SEND1(id, root_coder, "decodeObjectForKey:", id, rt_str(k))
+    id top = ROOT("UINibTopLevelObjectsKey");
+    ROOT("UINibObjectsKey");
+    id conns = ROOT("UINibConnectionsKey");
     for (size_t i = 0; conns && i < rt_array_count(conns); i++) {
         id c = rt_array_at(conns, i);
         if (rt_is_kind_of(c, RT_CLASS(UIRuntimeConnection))) conn_connect(c, NULL);
     }
     /* user defined runtime attributes */
-    id kvs = nc_decodeObject(root_coder, NULL, rt_str("UINibKeyValuePairsKey"));
+    id kvs = ROOT("UINibKeyValuePairsKey");
     for (size_t i = 0; kvs && i < rt_array_count(kvs); i++) {
         id pair = rt_array_at(kvs, i);
         if (!rt_responds(pair, rt_sel("valueForKey:"))) continue;
@@ -387,13 +394,13 @@ static id instantiate(struct nibfile *nf, id owner, id external) {
         if (obj && kp) RT_SEND2(void, obj, "setValue:forKeyPath:", id, val, id, kp);
     }
     /* awakeFromNib on everything that came out of the archive (not the owner) */
-    id all = nf->all;
     for (size_t i = 0; i < rt_array_count(all); i++) {
         id o = rt_array_at(all, i);
         if (o == owner || rt_is_kind_of(o, RT_CLASS(UIRuntimeConnection))) continue;
         if (rt_responds(o, rt_sel("awakeFromNib"))) RT_SEND0(void, o, "awakeFromNib");
     }
-    id wins = nc_decodeObject(root_coder, NULL, rt_str("UINibVisibleWindowsKey"));
+    id wins = ROOT("UINibVisibleWindowsKey");
+    #undef ROOT
     for (size_t i = 0; wins && i < rt_array_count(wins); i++) RT_SEND0(void, rt_array_at(wins, i), "makeKeyAndVisible");
     id result = RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "array");
     for (size_t i = 0; top && i < rt_array_count(top); i++) {
@@ -402,8 +409,54 @@ static id instantiate(struct nibfile *nf, id owner, id external) {
     }
     return result;
 }
+/* ------------------------------------------- old nibs: NSKeyedArchiver archives */
+typedef id (*rt_kua_hook)(void *ctx, const char *classname, id coder, Class *use_class);
+id rt_kua_new(id archive, rt_kua_hook hook, void *ctx, id all);
+id rt_kua_value(id coder, const char *key);
+int rt_kua_enter(id coder, const char *key);
+struct keyed_ctx { id owner, external; };
+static id keyed_hook(void *ctx, const char *cn, id coder, Class *use) {
+    struct keyed_ctx *k = ctx;
+    if (!strcmp(cn, "UIProxyObject")) {
+        id ident = rt_kua_value(coder, "UIProxiedObjectIdentifier");
+        const char *n = ident ? rt_str_utf8(ident) : "";
+        if (!strcmp(n, "IBFilesOwner")) return objc_retain(k->owner);
+        if (!strcmp(n, "IBFirstResponder")) return NULL;
+        id ext = k->external && ident ? rt_dict_get(k->external, ident) : NULL;
+        if (!ext) rt_warn("NIB: external object '%s' was not provided", n);
+        return objc_retain(ext);
+    }
+    if (!strcmp(cn, "UIClassSwapper")) {
+        id name = rt_kua_value(coder, "UIClassName"), orig = rt_kua_value(coder, "UIOriginalClassName");
+        Class c = name ? rt_class_named(rt_str_utf8(name)) : NULL;
+        if (!c) { rt_warn("NIB: custom class %s not found, using %s", name ? rt_str_utf8(name) : "?", orig ? rt_str_utf8(orig) : "?"); c = orig ? rt_class_named(rt_str_utf8(orig)) : NULL; }
+        *use = c ? c : RT_CLASS(NSObject);
+        return (id)-1;
+    }
+    if (!strcmp(cn, "UIImageNibPlaceholder")) {
+        id name = rt_kua_value(coder, "UIResourceName");
+        return objc_retain(name ? RT_SEND1(id, (id)RT_CLASS(UIImage), "imageNamed:", id, name) : NULL);
+    }
+    return (id)-1;
+}
+static id instantiate_keyed(uint8_t *buf, size_t len, id owner, id external, const char *what) {
+    id archive = rt_plist_parse(buf, len);
+    free(buf);
+    struct keyed_ctx ctx = { owner, external };
+    void *pool = objc_autoreleasePoolPush();
+    id all = RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "array");
+    id coder = rt_kua_new(archive, keyed_hook, &ctx, all);
+    objc_release(archive);
+    if (!coder) { objc_autoreleasePoolPop(pool); rt_warn("NIB %s: not a keyed archive", what); return NULL; }
+    /* the UINib* keys are on $top, or on the object $top's "IB.objectdata" refers to */
+    if (!(RT_SEND1(long, coder, "containsValueForKey:", id, rt_str("UINibTopLevelObjectsKey")) & 0xff)) rt_kua_enter(coder, "IB.objectdata");
+    id r = objc_retain(instantiate_from(coder, all, owner));
+    objc_release(coder);
+    objc_autoreleasePoolPop(pool);
+    return objc_autorelease(r);
+}
 id rt_nib_instantiate_data(uint8_t *buf, size_t len, id owner, id external, const char *what) {
-    if (len >= 6 && !memcmp(buf, "bplist", 6)) { rt_warn("NIB %s is an NSKeyedArchiver (old) nib; only NIBArchive nibs are supported", what); free(buf); return NULL; }
+    if ((len >= 6 && !memcmp(buf, "bplist", 6)) || (len >= 5 && !memcmp(buf, "<?xml", 5))) return instantiate_keyed(buf, len, owner, external, what);
     struct nibfile *nf = nib_parse(buf, len);
     if (!nf) { free(buf); return NULL; }
     void *pool = objc_autoreleasePoolPush();

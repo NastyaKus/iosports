@@ -1143,6 +1143,7 @@ static void choose_compat_screen(void) {
     rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);
     rt_scr_w = (float)bw; rt_scr_h = (float)bh; rt_scr_scale = 2;
 }
+id g_main_nib_objects;   /* the main nib's top-level objects, kept for the app's lifetime */
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
     (void)argc; (void)argv;
     void *pool = objc_autoreleasePoolPush();
@@ -1156,7 +1157,8 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
         /* storyboard/NIB launch: NSMainNibFile loads the window and delegate (outlets wire it up) */
         id nibName = RT_SEND1(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", id, rt_str("NSMainNibFile"));
         const char *path = nibName ? rt_nib_find(rt_str_utf8(nibName), NULL) : NULL;
-        if (path) rt_nib_instantiate(path, app, NULL);
+        /* like UIKit, keep the main nib's top-level objects (the delegate among them) for the app's lifetime */
+        if (path) g_main_nib_objects = objc_retain(rt_nib_instantiate(path, app, NULL));
         delegate = ((struct uiapp *)app)->delegate;
         if (!delegate) rt_guest_exit(75, "UIApplicationMain: no app delegate class (storyboards are not supported)");
     }

@@ -9,7 +9,8 @@ runtime's NIB loader can be tested without Interface Builder files.
     nib.outlet(owner, "view", view)
     nib.write("Main.nib", top=[owner, view])
 
-Usage as a script builds the nib used by samples/nib_demo: mknib.py out.nib
+Usage as a script builds the nib used by samples/nib_demo: mknib.py out.nib;
+mknib.py --main-window MainWindow.nib builds the keyed nib of samples/keyed_nib_demo.
 """
 import struct, sys
 
@@ -110,6 +111,81 @@ class Nib:
         with open(path, "wb") as f:
             f.write(header + sec_objs + sec_keys + sec_vals + sec_cls)
 
+    # ------------------------------------------------ keyed (old ibtool) format
+    def write_keyed(self, path, top, fmt="binary"):
+        """Same object graph as write(), as an NSKeyedArchiver archive: the
+        UINib* keys on $top, NSString/NSNumber values inline, arrays and
+        dictionaries as NS.objects/NS.keys, geometry blobs as "{x, y}" strings."""
+        import plistlib
+        from plistlib import UID
+        objects = ["$null"]
+        uid_of, class_uids = {}, {}
+        def cls_uid(name):
+            if name not in class_uids:
+                objects.append({"$classname": name, "$classes": [name, "NSObject"]})
+                class_uids[name] = UID(len(objects) - 1)
+            return class_uids[name]
+        def geometry(b):
+            n = (len(b) - 1) // 8
+            v = struct.unpack("<%dd" % n, b[1:1 + 8 * n])
+            f = lambda x: ("%g" % x)
+            return "{%s, %s}" % (f(v[0]), f(v[1])) if n == 2 else "{{%s, %s}, {%s, %s}}" % tuple(map(f, v))
+        def enc(idx):
+            if idx in uid_of: return uid_of[idx]
+            cls, vals = self.objects[idx]
+            if cls == "NSString":
+                objects.append(dict(vals)["NS.bytes"].decode()); uid_of[idx] = UID(len(objects) - 1); return uid_of[idx]
+            if cls == "NSNumber":
+                objects.append(dict(vals)["NS.intval"]); uid_of[idx] = UID(len(objects) - 1); return uid_of[idx]
+            d = {}
+            objects.append(d); uid_of[idx] = UID(len(objects) - 1)
+            items = [v for k, v in vals if k == "UINibEncoderEmptyKey"]
+            if cls in ("NSArray", "NSMutableArray"):
+                d["NS.objects"] = [conv(v) for v in items]
+            elif cls in ("NSDictionary", "NSMutableDictionary"):
+                d["NS.keys"] = [conv(v) for v in items[0::2]]; d["NS.objects"] = [conv(v) for v in items[1::2]]
+            else:
+                for k, v in vals:
+                    if k == "NSInlinedValue": continue
+                    d[k] = geometry(v) if isinstance(v, bytes) and v[:1] == b"\x07" else conv(v)
+            d["$class"] = cls_uid(cls)
+            return uid_of[idx]
+        def conv(v):
+            if isinstance(v, Ref): return enc(v.idx)
+            if isinstance(v, (bool, int, float, bytes)): return v
+            return "$null" if v is None else v
+        root_vals = dict(self.objects[0][1]) if self.objects[0][1] else {}
+        self.objects[0] = ("NSObject", [])
+        all_objs = [Ref(i) for i in range(1, len(self.objects))]
+        topd = {"UINibTopLevelObjectsKey": enc(self.array(top, mutable=False).idx),
+                "UINibObjectsKey": enc(self.array(all_objs, mutable=False).idx),
+                "UINibConnectionsKey": enc(self.array(self.connections, mutable=False).idx),
+                "UINibVisibleWindowsKey": enc(self.array([], mutable=False).idx)}
+        archive = {"$archiver": "NSKeyedArchiver", "$version": 100000, "$top": topd, "$objects": objects}
+        with open(path, "wb") as f:
+            plistlib.dump(archive, f, fmt=plistlib.FMT_BINARY if fmt == "binary" else plistlib.FMT_XML)
+
+def main_window_nib(path):
+    """MainWindow.nib for samples/keyed_nib_demo: File's Owner is the
+    UIApplication, its delegate outlet points at a controller object from
+    the nib, which owns the window, a label and a button."""
+    nib = Nib()
+    owner = nib.proxy("IBFilesOwner")
+    nib.proxy("IBFirstResponder")
+    ctl = nib.obj("KeyedNibController", [])
+    label = nib.view("UILabel", (20, 100, 280, 40), extra=[("UIText", nib.string("From a keyed nib")), ("UITextColor", nib.color(1, 1, 1)),
+                                                        ("UIFont", nib.font(20, bold=True)), ("UITextAlignment", 1)])
+    content = nib.obj("UIButtonContent", [("UITitle", nib.string("Press")), ("UITitleColor", nib.color(1, 1, 1))])
+    button = nib.view("UIButton", (110, 200, 100, 44), bg=(0.3, 0.6, 0.2),
+                      extra=[("UIButtonType", 0), ("UIButtonStatefulContent", nib.dictionary([(nib.number(0), content)]))])
+    badge = nib.view("UIView", (140, 300, 40, 40), custom_class="KeyedBadge", bg=(0.9, 0.2, 0.2))
+    window = nib.view("UIWindow", (0, 0, 320, 480), bg=(0.15, 0.1, 0.3), subviews=[label, button, badge])
+    nib.outlet(owner, "delegate", ctl)
+    nib.outlet(ctl, "window", window)
+    nib.outlet(ctl, "label", label)
+    nib.action(button, "pressed:", ctl)
+    nib.write_keyed(path, top=[owner, ctl, window])
+
 def demo_nib(path):
     nib = Nib()
     owner = nib.proxy("IBFilesOwner")
@@ -128,4 +204,7 @@ def demo_nib(path):
     nib.write(path, top=[owner, root])
 
 if __name__ == "__main__":
-    demo_nib(sys.argv[1] if len(sys.argv) > 1 else "Main.nib")
+    if len(sys.argv) > 2 and sys.argv[1] == "--main-window":
+        main_window_nib(sys.argv[2])
+    else:
+        demo_nib(sys.argv[1] if len(sys.argv) > 1 else "Main.nib")

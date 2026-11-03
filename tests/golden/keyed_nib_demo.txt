@@ -1,0 +1,5 @@
+controller awakeFromNib: window outlet set, label outlet From a keyed nib
+KeyedBadge awakeFromNib, frame {{140, 300}, {40, 40}}
+didFinishLaunching: delegate came from the nib: 1, window {{0, 0}, {320, 480}} with 3 subviews, background alpha 1.0
+pressed: UIButton -> 'pressed 1' (outlets alive: 1)
+pressed: UIButton -> 'pressed 2' (outlets alive: 1)

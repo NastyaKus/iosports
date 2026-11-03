@@ -62,3 +62,16 @@ extern "C" void iosrt_runtime_error_from_string1(void *self, const std::string &
 extern "C" void iosrt_logic_error_from_string(void *self, const std::string &s)
     __asm__("_ZNSt11logic_errorC2ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE");
 extern "C" void iosrt_logic_error_from_string(void *self, const std::string &s) { new (self) std::logic_error(s.c_str()); }
+
+// std::ios_base::Init: the static initializer every translation unit that
+// includes <iostream> runs. The standard streams themselves are not provided
+// (they need libc++'s locale machinery); initialising them is a no-op so such
+// programs start, and only real stream output would be missing.
+extern "C" void iosrt_ios_base_init_ctor(void *self) __asm__("_ZNSt3__18ios_base4InitC1Ev");
+extern "C" void iosrt_ios_base_init_ctor(void *self) { (void)self; }
+extern "C" void iosrt_ios_base_init_ctor2(void *self) __asm__("_ZNSt3__18ios_base4InitC2Ev");
+extern "C" void iosrt_ios_base_init_ctor2(void *self) { (void)self; }
+extern "C" void iosrt_ios_base_init_dtor(void *self) __asm__("_ZNSt3__18ios_base4InitD1Ev");
+extern "C" void iosrt_ios_base_init_dtor(void *self) { (void)self; }
+extern "C" void iosrt_ios_base_init_dtor2(void *self) __asm__("_ZNSt3__18ios_base4InitD2Ev");
+extern "C" void iosrt_ios_base_init_dtor2(void *self) { (void)self; }

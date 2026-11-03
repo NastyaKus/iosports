@@ -43,8 +43,6 @@ RT_DEFINE_CLASS(NSFormatter);
 RT_DEFINE_CLASS(NSDateFormatter);
 RT_DEFINE_CLASS(NSNumberFormatter);
 RT_DEFINE_CLASS(NSCoder);
-RT_DEFINE_CLASS(NSKeyedArchiver);
-RT_DEFINE_CLASS(NSKeyedUnarchiver);
 RT_DEFINE_CLASS(NSJSONSerialization);
 RT_DEFINE_CLASS(NSPropertyListSerialization);
 RT_DEFINE_CLASS(NSScanner);
@@ -209,9 +207,6 @@ static void nf_setMax(id self, SEL s, unsigned long v) { (void)s; ((struct nsfmt
 static void nf_setMin(id self, SEL s, unsigned long v) { (void)s; ((struct nsfmt *)self)->minFrac = (long)v; }
 
 /* ============================================================== keyed archiving */
-static id ka_archivedData(Class c, SEL s, id root) { (void)c; (void)s; (void)root; return objc_autorelease(rt_data_new("", 0)); }
-static rt_bool ka_archiveToFile(Class c, SEL s, id root, id path) { (void)c; (void)s; (void)root; (void)path; return 0; }
-static id ku_unarchive(Class c, SEL s, id data) { (void)c; (void)s; (void)data; return NULL; }
 static id coder_nil(id self, SEL s, id k) { (void)self; (void)s; (void)k; return NULL; }
 static long coder_zero(id self, SEL s, id k) { (void)self; (void)s; (void)k; return 0; }
 static double coder_zerod(id self, SEL s, id k) { (void)self; (void)s; (void)k; return 0; }
@@ -407,7 +402,8 @@ id rt_plist_xml(id o) {
     plx(&sb, o, 0); rt_sb_puts(&sb, "</plist>\n");
     id r = objc_autorelease(rt_data_new(sb.buf, sb.len)); free(sb.buf); return r;
 }
-static id pl_data(Class c, SEL s, id o, long fmt, unsigned long opts, id *err) { (void)c; (void)s; (void)fmt; (void)opts; if (err) *err = NULL; return rt_plist_xml(o); }
+id rt_bplist_write(id plist);
+static id pl_data(Class c, SEL s, id o, long fmt, unsigned long opts, id *err) { (void)c; (void)s; (void)opts; if (err) *err = NULL; return fmt == 200 ? rt_bplist_write(o) : rt_plist_xml(o); }
 static rt_bool coll_writeToFile(id self, SEL s, id path, long atomic) {
     (void)s; (void)atomic; id d = rt_plist_xml(self); size_t n; const void *b = rt_data_bytes(d, &n);
     FILE *f = fopen(rt_str_utf8(path), "wb"); if (!f) return 0; fwrite(b, 1, n, f); fclose(f); return 1;
@@ -761,10 +757,6 @@ void rt_foundation_more2_init(void) {
     IM(cd, "decodeFloatForKey:", coder_zerod); IM(cd, "containsValueForKey:", coder_no); IM(cd, "allowsKeyedCoding", coder_no);
     IM(cd, "encodeObject:forKey:", coder_encode); IM(cd, "encodeInteger:forKey:", coder_encode); IM(cd, "encodeBool:forKey:", coder_encode);
     IM(cd, "encodeDouble:forKey:", coder_encode); IM(cd, "encodeInt:forKey:", coder_encode); IM(cd, "encodeFloat:forKey:", coder_encode);
-    NEWCLASS(NSKeyedArchiver, cd, 0);
-    NEWCLASS(NSKeyedUnarchiver, cd, 0);
-    CM(RT_CLASS(NSKeyedArchiver), "archivedDataWithRootObject:", ka_archivedData); CM(RT_CLASS(NSKeyedArchiver), "archiveRootObject:toFile:", ka_archiveToFile);
-    CM(RT_CLASS(NSKeyedUnarchiver), "unarchiveObjectWithData:", ku_unarchive); CM(RT_CLASS(NSKeyedUnarchiver), "unarchiveObjectWithFile:", ku_unarchive);
 
     NEWCLASS(NSJSONSerialization, o, 0);
     CM(RT_CLASS(NSJSONSerialization), "JSONObjectWithData:options:error:", js_parse);

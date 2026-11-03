@@ -180,7 +180,17 @@ static id plist_obj(const uint8_t *data, size_t len, const uint8_t *offtab, int 
     case 0x4: { uint64_t n = bp_count(data, len, &p, lo); if (p + n > data + len) return NULL; return objc_autorelease(data_make(NULL, p, n)); }
     case 0x5: { uint64_t n = bp_count(data, len, &p, lo); if (p + n > data + len) return NULL; char *t = strndup((const char *)p, n); id r = rt_str(t); free(t); return r; }
     case 0x6: { uint64_t n = bp_count(data, len, &p, lo); if (p + n * 2 > data + len) return NULL; unichar *u = rt_xmalloc(n * 2 + 2); for (uint64_t i = 0; i < n; i++) u[i] = (unichar)be_n(p + i * 2, 2); id r = objc_autorelease(rt_str_new_utf16(u, n)); free(u); return r; }
-    case 0x8: return rt_num_int((long long)be_n(p, lo + 1));
+    case 0x8: {   /* UID (keyed archives): same shape as the XML form, a {"CF$UID": n} dictionary */
+        id d = objc_autorelease(rt_dict_new(NULL, NULL, 0));
+        rt_dict_set(d, rt_str("CF$UID"), rt_num_int((long long)be_n(p, lo + 1)));
+        return d;
+    }
+    case 0xc: {   /* set */
+        uint64_t n = bp_count(data, len, &p, lo);
+        id a = RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "array");
+        for (uint64_t i = 0; i < n; i++) { id o = plist_obj(data, len, offtab, offsz, refsz, nobj, be_n(p + i * (uint64_t)refsz, refsz), depth + 1); if (o) RT_SEND1(void, a, "addObject:", id, o); }
+        return RT_SEND1(id, (id)rt_class_named("NSMutableSet"), "setWithArray:", id, a);
+    }
     case 0xa: {
         uint64_t n = bp_count(data, len, &p, lo);
         id a = RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "array");
@@ -259,7 +269,16 @@ static id xp_value(struct xp *x, int depth) {
     if (!strncmp(t, "real>", 5)) { x->p += 6; char *s = xp_text(x, "</real>"); id r = rt_num_dbl(strtod(s, NULL)); free(s); return r; }
     if (!strncmp(t, "true/>", 6)) { x->p += 7; return RT_SEND1(id, (id)RT_CLASS(NSNumber), "numberWithBool:", long, 1); }
     if (!strncmp(t, "false/>", 7)) { x->p += 8; return RT_SEND1(id, (id)RT_CLASS(NSNumber), "numberWithBool:", long, 0); }
-    if (!strncmp(t, "date>", 5)) { x->p += 6; char *s = xp_text(x, "</date>"); free(s); return date_make(NULL, 0); }
+    if (!strncmp(t, "date>", 5)) {   /* ISO 8601, UTC: 2001-01-01T00:00:00Z */
+        x->p += 6; char *s = xp_text(x, "</date>");
+        struct tm tm; memset(&tm, 0, sizeof tm);
+        double ref = 0;
+        if (sscanf(s, "%d-%d-%dT%d:%d:%d", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min, &tm.tm_sec) >= 3) {
+            tm.tm_year -= 1900; tm.tm_mon -= 1;
+            ref = (double)timegm(&tm) - 978307200.0;   /* seconds since the 2001 reference date */
+        }
+        free(s); return date_make(NULL, ref);
+    }
     if (!strncmp(t, "data>", 5)) {
         x->p += 6; char *s = xp_text(x, "</data>");
         static const char *b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -846,7 +865,30 @@ static rt_bool fm_createDir(id self, SEL s, id path, long inter, id attrs, id *e
     (void)self; (void)s; (void)attrs; if (err) *err = NULL;
     return (inter & 0xff) ? mkdirs(rt_str_utf8(path)) : mkdir(rt_str_utf8(path), 0755) == 0;
 }
-static rt_bool fm_remove(id self, SEL s, id path, id *err) { (void)self; (void)s; if (err) *err = NULL; const char *p = rt_str_utf8(path); return unlink(p) == 0 || rmdir(p) == 0; }
+/* like NSFileManager: directories are removed with their contents */
+static int remove_tree(const char *p) {
+    struct stat st;
+    if (lstat(p, &st) != 0) return -1;
+    if (S_ISDIR(st.st_mode)) {
+        DIR *d = opendir(p); struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            char c[4200]; snprintf(c, sizeof c, "%s/%s", p, e->d_name);
+            remove_tree(c);
+        }
+        if (d) closedir(d);
+        return rmdir(p);
+    }
+    return unlink(p);
+}
+static rt_bool fm_remove(id self, SEL s, id path, id *err) {
+    (void)self; (void)s; if (err) *err = NULL;
+    if (!path) return 0;
+    if (remove_tree(rt_str_utf8(path)) == 0) return 1;
+    if (err) *err = RT_SEND3(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSCocoaErrorDomain"),
+                             long, errno == ENOENT ? 4 /* NSFileNoSuchFileError */ : 513 /* NSFileWriteNoPermissionError */, id, NULL);
+    return 0;
+}
 static rt_bool fm_createFile(id self, SEL s, id path, id data, id attrs) {
     (void)self; (void)s; (void)attrs; FILE *f = fopen(rt_str_utf8(path), "wb"); if (!f) return 0;
     if (data) { size_t n; const void *b = rt_data_bytes(data, &n); fwrite(b, 1, n, f); }
