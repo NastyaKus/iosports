@@ -46,11 +46,14 @@ public class RunActivity extends Activity implements NativeBridge.Listener {
         final String path = getIntent().getStringExtra(EXTRA_PATH);
         float density = getResources().getDisplayMetrics().density;
         final float w = iosView.getWidth() / density, h = iosView.getHeight() / density;
+        /* like an iPhone: integer scale, rendered at most at 2x (the software renderer's fill rate) */
+        final float scale = Math.min(2f, Math.max(1f, Math.round(density)));
+        iosView.setScreen(w, h);
         final File home = new File(getFilesDir(), "home/" + new File(path).getName());
         home.mkdirs();
-        append("[shell] launching " + path + "\n[shell] screen " + Math.round(w) + "x" + Math.round(h) + " pt @" + density + "x\n");
+        append("[shell] launching " + path + "\n[shell] screen " + Math.round(w) + "x" + Math.round(h) + " pt, rendered @" + Math.min(2, Math.max(1, Math.round(density))) + "x\n");
         Thread t = new Thread(() -> {
-            int rc = NativeBridge.nativeRun(path, home.getAbsolutePath(), w, h, density);
+            int rc = NativeBridge.nativeRun(path, home.getAbsolutePath(), w, h, scale);
             append("[shell] runtime returned " + rc + "\n");
         }, "iosrt-launcher");
         t.start();
@@ -64,7 +67,7 @@ public class RunActivity extends Activity implements NativeBridge.Listener {
     }
 
     @Override public void onLog(int fd, String text) { append(text); }
-    @Override public void onFrame(float[] cmds, String[] texts) { iosView.setFrame(cmds, texts); }
+    @Override public void onFrame(java.nio.ByteBuffer px, int w, int h) { iosView.setFrame(px, w, h); }
     @Override public void onExit(int code, String reason) {
         String msg = "[shell] guest exited with code " + code + (reason != null ? ": " + reason : "") + "\n";
         append(msg);

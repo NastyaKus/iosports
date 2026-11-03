@@ -578,27 +578,56 @@ static void sync_item(struct rt_queue *q, void *block, void *ctx, void (*fn)(voi
 }
 void iosrt_dispatch_sync(struct rt_queue *q, void *block) { sync_item(q, block, NULL, NULL); }
 void iosrt_dispatch_sync_f(struct rt_queue *q, void *ctx, void (*fn)(void *)) { sync_item(q, NULL, ctx, fn); }
-struct after_arg { int64_t ns; struct rt_queue *q; void *block; };
+/* dispatch_after: one timer thread with a sorted list of pending items */
+struct after_item { struct after_item *next; uint64_t due; struct rt_queue *q; void *block; void *ctx; void (*fn)(void *); };
+static struct after_item *after_head;
+static pthread_mutex_t after_m = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t after_c = PTHREAD_COND_INITIALIZER;
+static int after_started;
+uint64_t iosrt_mach_absolute_time(void);
 static void *after_thread(void *p) {
-    struct after_arg *a = p;
-    struct timespec ts = { (time_t)(a->ns / 1000000000), (long)(a->ns % 1000000000) };
-    nanosleep(&ts, NULL);
-    iosrt_dispatch_async(a->q, a->block);
-    _Block_release(a->block);
-    free(a);
+    (void)p;
+    pthread_mutex_lock(&after_m);
+    for (;;) {
+        uint64_t now = iosrt_mach_absolute_time();
+        while (after_head && after_head->due <= now) {
+            struct after_item *it = after_head; after_head = it->next;
+            pthread_mutex_unlock(&after_m);
+            if (it->block) { iosrt_dispatch_async(it->q, it->block); _Block_release(it->block); }
+            else iosrt_dispatch_async_f(it->q, it->ctx, it->fn);
+            free(it);
+            pthread_mutex_lock(&after_m);
+            now = iosrt_mach_absolute_time();
+        }
+        if (!after_head) pthread_cond_wait(&after_c, &after_m);
+        else {
+            uint64_t wait = after_head->due - now;
+            struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += (time_t)(wait / 1000000000ULL); ts.tv_nsec += (long)(wait % 1000000000ULL);
+            if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+            pthread_cond_timedwait(&after_c, &after_m, &ts);
+        }
+    }
     return NULL;
+}
+static void after_add(uint64_t when, struct rt_queue *q, void *block, void *ctx, void (*fn)(void *)) {
+    struct after_item *it = rt_xcalloc(1, sizeof *it);
+    it->due = when == ~0ULL ? ~0ULL : when; it->q = q; it->block = block ? _Block_copy(block) : NULL; it->ctx = ctx; it->fn = fn;
+    if (when == ~0ULL) { if (it->block) _Block_release(it->block); free(it); return; }   /* DISPATCH_TIME_FOREVER */
+    pthread_mutex_lock(&after_m);
+    struct after_item **pp = &after_head;
+    while (*pp && (*pp)->due <= it->due) pp = &(*pp)->next;
+    it->next = *pp; *pp = it;
+    if (!after_started) { after_started = 1; spawn(after_thread, NULL); }
+    pthread_cond_signal(&after_c);
+    pthread_mutex_unlock(&after_m);
 }
 uint64_t iosrt_dispatch_time(uint64_t when, int64_t delta) {
     uint64_t base = when == 0 ? iosrt_mach_absolute_time() : when;
     return base + (uint64_t)delta;
 }
-void iosrt_dispatch_after(uint64_t when, struct rt_queue *q, void *block) {
-    struct after_arg *a = rt_xmalloc(sizeof *a);
-    int64_t now = (int64_t)iosrt_mach_absolute_time();
-    a->ns = when == ~0ULL ? 0 : (int64_t)when - now; if (a->ns < 0) a->ns = 0;
-    a->q = q; a->block = _Block_copy(block);
-    spawn(after_thread, a);
-}
+void iosrt_dispatch_after(uint64_t when, struct rt_queue *q, void *block) { after_add(when, q, block, NULL, NULL); }
+void iosrt_dispatch_after_f(uint64_t when, struct rt_queue *q, void *ctx, void (*fn)(void *)) { after_add(when, q, NULL, ctx, fn); }
 /* once: predicate 0 = not run, 1 = running, ~0 = done. No global lock, so nested
  * dispatch_once calls on *different* predicates work (as on Darwin). */
 static int once_begin(long *pred) {

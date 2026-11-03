@@ -53,7 +53,7 @@ for flavor in linux-aarch64 android-arm64; do
   if [ $rc = 0 ] && diff -u "$root/tests/golden/objc_basics.txt" "$T/out.txt" >"$T/diff.txt"; then ok "objc_basics (chained fixups)"; else ko "objc_basics.chained rc=$rc" "$T/diff.txt"; fi
   # 3. UIKit-lite: launch, layout, scripted taps, display list
   IOSRT_HEADLESS_FRAMES=6 IOSRT_SCRIPT="3:tap:187,205;4:tap:187,205;5:tap:10,600" $R "$S/uikit_hello" >"$T/out.txt" 2>&1; rc=$?
-  if [ $rc = 0 ] && diff -u "$root/tests/golden/uikit_hello.txt" "$T/out.txt" >"$T/diff.txt"; then ok "uikit_hello (display list + touches)"; else ko "uikit_hello rc=$rc" "$T/diff.txt"; fi
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/uikit_hello.txt" "$T/out.txt" >"$T/diff.txt"; then ok "uikit_hello (rendered frame trace + touches)"; else ko "uikit_hello rc=$rc" "$T/diff.txt"; fi
   IOSRT_HEADLESS_FRAMES=2 $R "$S/Counter.app" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && grep -q '"taps: 0' "$T/out.txt"; then ok ".app bundle via Info.plist"; else ko ".app bundle rc=$rc" "$T/out.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend

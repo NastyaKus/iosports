@@ -1,5 +1,6 @@
 package org.iosrt;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /** JNI bridge to libiosrt.so (the iOS compatibility runtime). */
@@ -8,7 +9,8 @@ public final class NativeBridge {
 
     public interface Listener {
         void onLog(int fd, String text);
-        void onFrame(float[] cmds, String[] texts);
+        /** premultiplied RGBA pixels, valid only during the call */
+        void onFrame(ByteBuffer pixels, int width, int height);
         void onExit(int code, String reason);
     }
     private static volatile Listener listener;
@@ -26,9 +28,9 @@ public final class NativeBridge {
         Listener l = listener;
         if (l != null) l.onLog(fd, new String(utf8, StandardCharsets.UTF_8));
     }
-    static void onFrame(float[] cmds, String[] texts) {
+    static void onFrame(ByteBuffer pixels, int width, int height) {
         Listener l = listener;
-        if (l != null) l.onFrame(cmds, texts);
+        if (l != null) l.onFrame(pixels, width, height);
     }
     static void onExit(int code, String reason) {
         Listener l = listener;
