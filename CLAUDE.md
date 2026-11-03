@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 53/53
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 57/57
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -55,6 +55,9 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | NIB / keyed archives / storyboard | `uikit/nib.c`, `foundation/archiver.c`, `uikit/storyboard.c` |
 | Слои и композитинг | `uikit/layer.c` (`rt_layer_render`, `draw_contents`) |
 | UIWebView | `uikit/webview.c` + движок `web{dom,css,layout,js}.c`, интерфейс `webengine.h`; QuickJS в `runtime/third_party/quickjs` |
+| OpenGL ES / EAGL | `gl/gl.c` (драйвер, EGL, обёртки), `gl/eagl.c` (EAGLContext, present в слой), `gl/gl_null.c` (софт-заглушка без драйвера), `gl/pvrtc.c`; экспорты `exports/gl.def`, привязка в `loader/symbols.c` (lib `OpenGLES` → `rt_gl_resolve`) |
+| Звук | `audio/audio.c` (RemoteIO, AUGraph, бэкенды), `audio/queue.c` (AudioQueue поверх внутреннего RemoteIO) |
+| Акселерометр | `motion/motion.c` (UIAccelerometer, CMMotionManager, NDK-датчик), `exports/motion.def` |
 | Отчёт совместимости (`--report`, вердикт) | `run.c` `report_bundle()` |
 | Старый GNU libstdc++ (list, rb-tree, throw) | `cxx/cxx_abi.c`, экспорты в `exports/cxx.def` |
 
@@ -75,6 +78,8 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
   через `pushViewController:` (коммит `bfdeb10`). Пилюля BPM проверена трассой:
   TAP/BPM открывается, значок часов справа возвращает, такт тянется.
 - Туториалы Loopy: JS + DOM в UIWebView, Next/Back/Close работают (`24a9d40`).
+- OpenGL ES через EAGL (`48c0441`), AudioQueue и акселерометр: DeathWorm в трассе проходит
+  инициализацию и игровой цикл без недостающих API (в null-GL кадр чёрный, на телефоне — драйвер).
 - GunLayer не падает на старте: GNU libstdc++, CFNotificationCenter,
   `objectsForKeys:notFoundMarker:`, rlimits (`a00294a`). Дальше ему нужны GL и dylib.
 - Фаза 3a: keyed archives, старые NIB, storyboard'ы, CoreText, setjmp, mach-часы.
@@ -87,11 +92,10 @@ Help — (100,497); в туториале Next — (284,546), Close — (279,23)
 
 ## План (порядок согласован с Кириллом)
 
-1. Фаза 3b (идёт): ✅ панель Loopy, ✅ JS в UIWebView → **OpenGL ES** (EAGL на EGL
-   с pbuffer, `presentRenderbuffer` через `glReadPixels`, null-GL для хоста,
-   PVRTC, ABI-обёртки) → GLKit + акселерометр → звук (микшер, декодеры,
-   AudioQueue, AVAudioPlayer, OpenAL, ExtAudioFile, AudioConverter, микрофон) →
-   Keychain, GameKit/StoreKit «недоступно». Детальный план:
+1. Фаза 3b (идёт): ✅ панель Loopy, ✅ JS в UIWebView, ✅ OpenGL ES, ✅ AudioQueue,
+   ✅ акселерометр → GLKit → звук дальше (декодеры WAV/CAF/MP3/AAC, AVAudioPlayer,
+   AudioServices, OpenAL, ExtAudioFile, AudioConverter, микрофон) → Keychain,
+   GameKit/StoreKit «недоступно». Детальный план:
    `/root/.claude/plans/root-claude-uploads-1d44effc-ef14-59e7-dapper-shannon.md`.
 2. Фаза 3c: загрузка `MH_DYLIB` из `.app/Frameworks` (GunLayer `enhance.framework`,
    основа под Swift).
@@ -101,6 +105,6 @@ Help — (100,497); в туториале Next — (284,546), Close — (279,23)
 
 - **Loopy HD**: UIKit, AudioUnit/RemoteIO, UIWebView-туториалы; не хватает микрофона,
   AudioConverter.
-- **DeathWorm**: GLES 1.1 (OES FBO), AudioQueue, UIAccelerometer, Keychain.
+- **DeathWorm**: GLES 1.1 (OES FBO), AudioQueue, UIAccelerometer — всё есть; проверить на телефоне.
 - **GunLayer**: Adobe AIR, `enhance.framework` (dylib), GLES, старый libstdc++.
 - **Gismeteo**: Swift, Core Data, SpriteKit, MapKit — самая дальняя цель.

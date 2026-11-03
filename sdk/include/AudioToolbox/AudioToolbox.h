@@ -12,6 +12,11 @@ typedef double Float64;
 typedef float Float32;
 typedef int16_t SInt16;
 typedef uint64_t UInt64;
+typedef int64_t SInt64;
+#ifndef IOSRT_BOOLEAN_DEFINED
+#define IOSRT_BOOLEAN_DEFINED
+typedef unsigned char Boolean;
+#endif
 typedef uint32_t OSType;
 typedef uint32_t AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, AudioUnitRenderActionFlags, AudioFormatID, AudioFormatFlags;
 typedef struct OpaqueAudioComponent *AudioComponent;
@@ -45,6 +50,31 @@ OSStatus AudioUnitInitialize(AudioUnit u);
 OSStatus AudioUnitUninitialize(AudioUnit u);
 OSStatus AudioOutputUnitStart(AudioUnit u);
 OSStatus AudioOutputUnitStop(AudioUnit u);
+
+/* AudioQueue (output) */
+typedef struct OpaqueAudioQueue *AudioQueueRef;
+typedef struct AudioStreamPacketDescription { SInt64 mStartOffset; UInt32 mVariableFramesInPacket; UInt32 mDataByteSize; } AudioStreamPacketDescription;
+typedef struct AudioQueueBuffer {
+    const UInt32 mAudioDataBytesCapacity; void *const mAudioData; UInt32 mAudioDataByteSize; void *mUserData;
+    const UInt32 mPacketDescriptionCapacity; AudioStreamPacketDescription *const mPacketDescriptions; UInt32 mPacketDescriptionCount;
+} AudioQueueBuffer, *AudioQueueBufferRef;
+typedef void (*AudioQueueOutputCallback)(void *inUserData, AudioQueueRef inAQ, AudioQueueBufferRef inBuffer);
+typedef UInt32 AudioQueueParameterID;
+typedef UInt32 AudioQueuePropertyID;
+enum { kAudioQueueParam_Volume = 1 };
+enum { kAudioQueueProperty_IsRunning = 'aqrn' };
+OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback cb, void *user, void *runLoop, const void *runLoopMode, UInt32 flags, AudioQueueRef *outAQ);
+OSStatus AudioQueueAllocateBuffer(AudioQueueRef q, UInt32 size, AudioQueueBufferRef *out);
+OSStatus AudioQueueFreeBuffer(AudioQueueRef q, AudioQueueBufferRef b);
+OSStatus AudioQueueEnqueueBuffer(AudioQueueRef q, AudioQueueBufferRef b, UInt32 npd, const AudioStreamPacketDescription *pds);
+OSStatus AudioQueueStart(AudioQueueRef q, const AudioTimeStamp *start);
+OSStatus AudioQueuePause(AudioQueueRef q);
+OSStatus AudioQueueStop(AudioQueueRef q, Boolean immediate);
+OSStatus AudioQueueDispose(AudioQueueRef q, Boolean immediate);
+OSStatus AudioQueueSetParameter(AudioQueueRef q, AudioQueueParameterID p, Float32 v);
+OSStatus AudioQueueGetParameter(AudioQueueRef q, AudioQueueParameterID p, Float32 *v);
+OSStatus AudioQueueGetCurrentTime(AudioQueueRef q, void *timeline, AudioTimeStamp *ts, Boolean *discontinuity);
+OSStatus AudioQueueGetProperty(AudioQueueRef q, AudioQueuePropertyID p, void *data, UInt32 *size);
 #ifdef __cplusplus
 }
 #endif

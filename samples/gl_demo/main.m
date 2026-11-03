@@ -3,7 +3,8 @@
 //    framebuffer with a renderbuffer whose storage comes from the layer;
 //  - frames driven by CADisplayLink: clear to blue, a scissored red
 //    rectangle in the bottom-left corner (GL's origin), present;
-//  - an ES 1.1 context with OES framebuffer objects next to it.
+//  - an ES 1.1 context with OES framebuffer objects next to it;
+//  - tilt from UIAccelerometer and CoreMotion, like games steer.
 // Without a GPU driver (tests, the host) the runtime's null GL stands in:
 // clears, scissors and the present path behave, so the frame shows up.
 #import <UIKit/UIKit.h>
@@ -12,6 +13,7 @@
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
 #import <OpenGLES/ES1/glext.h>
+#import <CoreMotion/CoreMotion.h>
 
 @interface GLView : UIView
 @end
@@ -19,8 +21,10 @@
 + (Class)layerClass { return [CAEAGLLayer class]; }
 @end
 
-@interface GLController : UIViewController
+@interface GLController : UIViewController <UIAccelerometerDelegate>
 @property (nonatomic, strong) EAGLContext *context;
+@property (nonatomic, strong) CMMotionManager *motion;
+@property (nonatomic) int accelCalls;
 @property (nonatomic, strong) CADisplayLink *link;
 @property (nonatomic) GLuint fb, rb;
 @property (nonatomic) GLint width, height;
@@ -72,8 +76,23 @@
           [[EAGLContext alloc] initWithAPI:4] == nil);
     [EAGLContext setCurrentContext:self.context];
 
+    UIAccelerometer *acc = [UIAccelerometer sharedAccelerometer];
+    acc.updateInterval = 0.02;
+    acc.delegate = self;
+    self.motion = [CMMotionManager new];
+    self.motion.accelerometerUpdateInterval = 0.02;
+    [self.motion startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue] withHandler:^(CMAccelerometerData *data, NSError *error) {
+        NSLog(@"CoreMotion: available %d, acceleration %.2f %.2f %.2f", self.motion.accelerometerAvailable,
+              data.acceleration.x, data.acceleration.y, data.acceleration.z);
+        [self.motion stopAccelerometerUpdates];
+    }];
+
     self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(drawFrame:)];
     [self.link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+}
+- (void)accelerometer:(UIAccelerometer *)a didAccelerate:(UIAcceleration *)acc {
+    if (++self.accelCalls == 1) NSLog(@"UIAccelerometer: shared %d, %.2f %.2f %.2f", a == [UIAccelerometer sharedAccelerometer], acc.x, acc.y, acc.z);
+    if (self.accelCalls == 2) a.delegate = nil;
 }
 - (void)drawFrame:(CADisplayLink *)link {
     [EAGLContext setCurrentContext:self.context];

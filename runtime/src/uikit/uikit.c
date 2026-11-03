@@ -1365,6 +1365,7 @@ void rt_uikit_init(void) {
     { void rt_coretext_init(void); rt_coretext_init(); }
     rt_layers_init();
     { void rt_eagl_init(void); rt_eagl_init(); }
+    { void rt_motion_init(void); rt_motion_init(); }
 
     NEWCLASS(UIResponder, o, 0);
     Class r = RT_CLASS(UIResponder);

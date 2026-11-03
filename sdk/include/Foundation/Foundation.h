@@ -324,6 +324,12 @@ __attribute__((objc_root_class))
 @property (readonly, getter=isValid) BOOL valid;
 @property (readonly) id userInfo;
 @end
+@interface NSOperationQueue : NSObject
++ (NSOperationQueue *)mainQueue;
++ (NSOperationQueue *)currentQueue;
+- (void)addOperationWithBlock:(void (^)(void))block;
+@property NSInteger maxConcurrentOperationCount;
+@end
 @interface NSRunLoop : NSObject
 + (NSRunLoop *)currentRunLoop;
 + (NSRunLoop *)mainRunLoop;

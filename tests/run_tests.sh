@@ -57,7 +57,8 @@ cat > "$S/Storyboard.app/Info.plist" <<PL
 <key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
 app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
-app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES
+app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
+app "$S/audioqueue_demo" 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 rm -rf "$S/WebJS.app"; mkdir -p "$S/WebJS.app"
 app "$S/WebJS.app/WebJS" 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_webjs_bundle.py" "$S/WebJS.app"
@@ -142,19 +143,25 @@ for flavor in linux-aarch64 android-arm64; do
   if [ $rc = 0 ] && diff -u "$root/tests/golden/webjs_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "webjs_demo (JavaScript + DOM: click handlers, elementFromPoint, iframe bridge, timers)"; else ko "webjs_demo rc=$rc" "$T/diff.txt"; fi
   # 3k. OpenGL ES: EAGL contexts (ES 2, ES 1 + OES FBOs, sharegroups), layer-backed renderbuffer, present into the layer (null GL)
   rm -f "$T/gl.png"
-  IOSRT_HEADLESS_FRAMES=8 IOSRT_PNG_OUT="$T/gl.png" $R "$S/gl_demo" >"$T/out.txt" 2>&1; rc=$?
-  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  IOSRT_ACCEL=0.12,-0.25,-0.96 IOSRT_HEADLESS_FRAMES=8 IOSRT_PNG_OUT="$T/gl.png" $R "$S/gl_demo" >"$T/out.txt" 2>&1; rc=$?
+  # accelerometer deliveries are timer-paced: checked apart from the ordered events
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen \|^UIAccelerometer\|^CoreMotion' "$T/out.txt" >"$T/events.txt"
+  grep -q '^UIAccelerometer: shared 1, 0.12 -0.25 -0.96' "$T/out.txt" && grep -q '^CoreMotion: available 1, acceleration 0.12 -0.25 -0.96' "$T/out.txt" || rc=99
   # the presented frame: blue, with the scissored red rectangle at the bottom left (GL's origin)
   px=$(python3 -I -c "
 import sys
 from PIL import Image
 im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size
 print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h - 10)))" "$T/gl.png" 2>/dev/null)
-  if [ $rc = 0 ] && diff -u "$root/tests/golden/gl_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q '^image 0,0 375x667 px=750x1334' "$T/out.txt" && [ "$px" = "(26, 51, 204) (230, 26, 26) (26, 51, 204)" ]; then ok "gl_demo (EAGL + renderbuffer from CAEAGLLayer + present, ES 1/2 contexts)"; else echo "       pixels: $px"; ko "gl_demo rc=$rc" "$T/diff.txt"; fi
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/gl_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q '^image 0,0 375x667 px=750x1334' "$T/out.txt" && [ "$px" = "(26, 51, 204) (230, 26, 26) (26, 51, 204)" ]; then ok "gl_demo (EAGL + renderbuffer from CAEAGLLayer + present, ES 1/2 contexts, accelerometer)"; else echo "       pixels: $px"; ko "gl_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && grep -q "many render callbacks" "$T/out.txt" && python3 -I "$root/tests/check_wav.py" "$T/sine.wav" >"$T/wav.txt"; then ok "audio_sine ($(cat "$T/wav.txt"))"; else ko "audio_sine rc=$rc" "$T/out.txt"; fi
+  # 4a. AudioQueue output: primed buffers refilled from the callback -> WAV backend
+  rm -f "$T/aq.wav"
+  IOSRT_AUDIO_WAV=$T/aq.wav $R "$S/audioqueue_demo" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/audioqueue_demo.txt" "$T/out.txt" >"$T/diff.txt" && python3 -I "$root/tests/check_wav.py" "$T/aq.wav" >"$T/wav.txt"; then ok "audioqueue_demo ($(cat "$T/wav.txt"))"; else ko "audioqueue_demo rc=$rc" "$T/diff.txt"; fi
   # 4b. C++ on the Apple libc++ ABI (only the Android build links the C++ support)
   if [ $flavor = android-arm64 ]; then
     $R "$S/cxx_basics" >"$T/out.txt" 2>&1; rc=$?

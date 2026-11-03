@@ -35,6 +35,7 @@ struct iosrt_export { const char *lib; const char *name; void *addr; };
 #include "uikit.def"
 #include "audio.def"
 #include "gl.def"
+#include "motion.def"
 #ifdef IOSRT_WITH_CXX
 #include "cxx.def"
 #include "cxx_gen.def"
@@ -52,6 +53,7 @@ static struct iosrt_export table[] = {
 #include "uikit.def"
 #include "audio.def"
 #include "gl.def"
+#include "motion.def"
 #ifdef IOSRT_WITH_CXX
 #include "cxx.def"
 #include "cxx_gen.def"
