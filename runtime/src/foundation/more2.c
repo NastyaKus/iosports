@@ -667,6 +667,10 @@ static void fh_writeData(id self, SEL s, id d) {
 }
 static unsigned long long fh_seekEnd(id self, SEL s) { (void)s; return (unsigned long long)lseek(((struct nsfh *)self)->fd, 0, SEEK_END); }
 static void fh_seek(id self, SEL s, unsigned long long o) { (void)s; lseek(((struct nsfh *)self)->fd, (off_t)o, SEEK_SET); }
+static int fh_fd(id self, SEL s) { (void)s; return ((struct nsfh *)self)->fd; }
+static id fh_stdin(Class c, SEL s) { (void)s; return fh_make(c, 0, 0); }
+static id fh_initFd(id self, SEL s, int fd) { (void)s; ((struct nsfh *)self)->fd = fd; ((struct nsfh *)self)->own = 0; return self; }
+static id fh_initFdClose(id self, SEL s, int fd, long own) { (void)s; ((struct nsfh *)self)->fd = fd; ((struct nsfh *)self)->own = own & 0xff; return self; }
 static unsigned long long fh_offset(id self, SEL s) { (void)s; return (unsigned long long)lseek(((struct nsfh *)self)->fd, 0, SEEK_CUR); }
 static void fh_truncate(id self, SEL s, unsigned long long o) { (void)s; if (ftruncate(((struct nsfh *)self)->fd, (off_t)o)) { /* ignore */ } }
 static void fh_close(id self, SEL s) { (void)s; struct nsfh *f = (struct nsfh *)self; if (f->own && f->fd > 2) close(f->fd); f->fd = -1; }
@@ -982,6 +986,8 @@ void rt_foundation_more2_init(void) {
     CM(fh, "fileHandleForReadingAtPath:", fh_read); CM(fh, "fileHandleForWritingAtPath:", fh_write); CM(fh, "fileHandleForUpdatingAtPath:", fh_update);
     CM(fh, "fileHandleWithStandardOutput", fh_stdout); CM(fh, "fileHandleWithStandardError", fh_stderr);
     IM(fh, "readDataToEndOfFile", fh_readToEnd); IM(fh, "readDataOfLength:", fh_readLen); IM(fh, "writeData:", fh_writeData);
+    IM(fh, "fileDescriptor", fh_fd); CM(fh, "fileHandleWithStandardInput", fh_stdin);
+    IM(fh, "initWithFileDescriptor:", fh_initFd); IM(fh, "initWithFileDescriptor:closeOnDealloc:", fh_initFdClose);
     IM(fh, "seekToEndOfFile", fh_seekEnd); IM(fh, "seekToFileOffset:", fh_seek); IM(fh, "offsetInFile", fh_offset);
     IM(fh, "truncateFileAtOffset:", fh_truncate); IM(fh, "closeFile", fh_close); IM(fh, "synchronizeFile", fh_sync); IM(fh, "dealloc", fh_dealloc);
 

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 #include <dlfcn.h>
 #include <sys/utsname.h>
 
@@ -30,6 +31,30 @@ int iosrt_clock_get_time(uint32_t serv, struct { uint32_t sec; int32_t nsec; } *
     if (t) { t->sec = (uint32_t)ts.tv_sec; t->nsec = (int32_t)ts.tv_nsec; }
     return KERN_SUCCESS;
 }
+
+/* resource limits: Darwin numbers RLIMIT_AS/RSS 5, MEMLOCK 6, NPROC 7, NOFILE 8;
+ * RLIM_INFINITY is INT64_MAX there and ~0 on Linux */
+#include <sys/resource.h>
+static int rlim_map(int r) {
+    static const int m[] = { RLIMIT_CPU, RLIMIT_FSIZE, RLIMIT_DATA, RLIMIT_STACK, RLIMIT_CORE, RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NPROC, RLIMIT_NOFILE };
+    return r >= 0 && r < 9 ? m[r] : -1;
+}
+#define DARWIN_RLIM_INF 0x7fffffffffffffffULL
+int iosrt_getrlimit(int r, uint64_t *out) {
+    int lr = rlim_map(r & 0xff); struct rlimit l;
+    if (lr < 0 || getrlimit(lr, &l) != 0) { errno = EINVAL; return -1; }
+    out[0] = l.rlim_cur == RLIM_INFINITY ? DARWIN_RLIM_INF : (uint64_t)l.rlim_cur;
+    out[1] = l.rlim_max == RLIM_INFINITY ? DARWIN_RLIM_INF : (uint64_t)l.rlim_max;
+    return 0;
+}
+int iosrt_setrlimit(int r, const uint64_t *in) {
+    int lr = rlim_map(r & 0xff); if (lr < 0) { errno = EINVAL; return -1; }
+    struct rlimit l = { in[0] >= DARWIN_RLIM_INF ? RLIM_INFINITY : in[0], in[1] >= DARWIN_RLIM_INF ? RLIM_INFINITY : in[1] };
+    return setrlimit(lr, &l);
+}
+/* no mounted file systems are reported */
+int iosrt_getfsstat(void *buf, int size, int flags) { (void)buf; (void)size; (void)flags; return 0; }
+
 /* threads are never cancelled by the runtime: report the defaults */
 int iosrt_pthread_setcanceltype(int type, int *old) { (void)type; if (old) *old = 0 /* DEFERRED */; return 0; }
 int iosrt_pthread_setcancelstate(int state, int *old) { (void)state; if (old) *old = 1 /* ENABLE (Darwin) */; return 0; }
