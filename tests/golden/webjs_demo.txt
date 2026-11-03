@@ -1,0 +1,8 @@
+load guide.html (type 5)
+loaded 'Guide': 3 sections, 1 visible, step '1 of 3'
+solid at the card true, at the hole false, at the close button true
+layout: card 47.5,220 280x101, close 304,5, json {"a":[1,2],"b":false}
+command from the page: timer (type 5), page says '1 of 3'
+command from the page: second-step (type 5), page says '2 of 3'
+command from the page: second-step (type 5), page says '2 of 3'
+command from the page: close (type 0), page says '3 of 3'

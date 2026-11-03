@@ -57,6 +57,9 @@ cat > "$S/Storyboard.app/Info.plist" <<PL
 <key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
 app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
+rm -rf "$S/WebJS.app"; mkdir -p "$S/WebJS.app"
+app "$S/WebJS.app/WebJS" 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tests/make_webjs_bundle.py" "$S/WebJS.app"
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -132,6 +135,10 @@ for flavor in linux-aarch64 android-arm64; do
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
   grep '^ctrun ' "$T/out.txt" >>"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/coretext_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "coretext_demo (CTLine/CTRun/CTFramesetter, attributed runs)"; else ko "coretext_demo rc=$rc" "$T/diff.txt"; fi
+  # 3j. scripted page: JS steps through sections, hit tests via elementFromPoint, iframe command bridge, timers
+  IOSRT_HEADLESS_FRAMES=16 IOSRT_SCRIPT="4:tap:293,395;6:tap:75,395;8:tap:293,395;10:tap:293,395;12:tap:336,20" $R "$S/WebJS.app" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/webjs_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "webjs_demo (JavaScript + DOM: click handlers, elementFromPoint, iframe bridge, timers)"; else ko "webjs_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

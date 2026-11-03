@@ -117,6 +117,26 @@ Planned target design (for real apps):
 | NIB / storyboard | `NSKeyedUnarchiver` over compiled `.nib` (binary plist / NIBArchive) |
 | `UIScreen` scale, orientation, safe areas | from `DisplayMetrics`, `WindowInsets` |
 
+### UIWebView: the built-in web engine
+
+Apps use `UIWebView` mostly for pages shipped in the bundle (help, tutorials,
+licenses), often scripted, and often as a channel to native code: the page
+loads `myscheme://command` in a hidden iframe, the app answers in
+`webView:shouldStartLoadWithRequest:navigationType:`, and the app asks the page
+questions with `stringByEvaluatingJavaScriptFromString:`. The runtime renders
+such pages itself (`runtime/src/uikit/web*.c`, interface in `webengine.h`):
+
+| Stage | File | What it does |
+|---|---|---|
+| DOM | `webdom.c` | forgiving HTML tree builder, tree edits, `innerHTML`/`outerHTML`, CSS selector matching |
+| Style | `webcss.c` | sheets, `@media`, cascade (UA < author < style attribute < `!important`), computed values |
+| Layout | `weblayout.c` | block/inline flow, floats, inline-blocks, positioned boxes against their containing blocks; a sorted display list plus one border box per element; `elementFromPoint`-style hit testing |
+| Script | `webjs.c` | QuickJS (`runtime/third_party/quickjs`, MIT) with one JS object per DOM node; a JS prelude provides events, `classList`, timers, `location`, `console`, storage |
+| View | `webview.c` | loading and navigation, the `UIScrollView` + document view pair, taps → click events → links |
+
+Layout runs again when the DOM or an inline style changes; geometry getters
+(`offsetWidth`, `getBoundingClientRect`, `elementFromPoint`) lay out first.
+
 ## Core Audio compatibility layer
 
 Stage 1 (implemented): RemoteIO output units — `AudioComponentFindNext`,

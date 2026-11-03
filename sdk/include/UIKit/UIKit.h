@@ -89,6 +89,7 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 @property (readonly, strong) CALayer *layer;
 @property (nonatomic) CGAffineTransform transform;
 @property (nonatomic) BOOL clipsToBounds;
+@property (nonatomic, getter=isOpaque) BOOL opaque;
 @property (nonatomic) UIViewContentMode contentMode;
 @property (nonatomic) UIViewAutoresizing autoresizingMask;
 @property (nonatomic, strong) UIColor *tintColor;

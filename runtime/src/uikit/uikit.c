@@ -352,6 +352,7 @@ static void v_layoutIfNeeded(id self, SEL s) { (void)s; layout_tree(self); }
 static void v_noop(id self, SEL s) { (void)self; (void)s; }
 static void v_noop1(id self, SEL s, id a) { (void)self; (void)s; (void)a; }
 static void v_noopL(id self, SEL s, long a) { (void)self; (void)s; (void)a; }
+static rt_bool v_isOpaque(id self, SEL s) { (void)self; (void)s; return 1; }
 static void v_noopD(id self, SEL s, double a) { (void)self; (void)s; (void)a; }
 static void v_noopFL(id self, SEL s, float a, long b) { (void)self; (void)s; (void)a; (void)b; }
 static id v_nil(id self, SEL s) { (void)self; (void)s; return NULL; }
@@ -1456,7 +1457,7 @@ void rt_uikit_init(void) {
     IM(v, "setAccessibilityContainerType:", v_noopL); IM(v, "setAccessibilityElements:", v_noop1); IM(v, "addConstraint:", v_noop1); IM(v, "addConstraints:", v_noop1);
     IM(v, "removeConstraint:", v_noop1); IM(v, "removeConstraints:", v_noop1); IM(v, "constraints", v_nil); IM(v, "updateConstraintsIfNeeded", v_noop);
     IM(v, "setNeedsUpdateConstraints", v_noop); IM(v, "updateConstraints", v_noop);
-    IM(v, "setOpaque:", v_noopL); IM(v, "setClearsContextBeforeDrawing:", v_noopL); IM(v, "setPreservesSuperviewLayoutMargins:", v_noopL);
+    IM(v, "setOpaque:", v_noopL); IM(v, "isOpaque", v_isOpaque); IM(v, "setClearsContextBeforeDrawing:", v_noopL); IM(v, "setPreservesSuperviewLayoutMargins:", v_noopL);
     IM(v, "setSemanticContentAttribute:", v_noopL); IM(v, "setInsetsLayoutMarginsFromSafeArea:", v_noopL); IM(v, "setRestorationIdentifier:", v_noop1);
     IM(v, "description", v_description);
     CM(v, "animateWithDuration:animations:", va_anim); CM(v, "animateWithDuration:animations:completion:", va_animC);
