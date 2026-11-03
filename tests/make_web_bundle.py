@@ -40,7 +40,8 @@ open(os.path.join(html, "index.html"), "w").write("""<!DOCTYPE html>
 open(os.path.join(html, "page2.html"), "w").write("""<html><head><title>Second</title><link rel="stylesheet" href="style.css"></head>
 <body><h1>Page two</h1><ul><li>first item</li><li>second item</li></ul><p><a href="index.html#top">back to index</a></p></body></html>
 """)
-open(os.path.join(app, "Info.plist"), "w").write("""<?xml version="1.0" encoding="UTF-8"?>
+if not os.path.exists(os.path.join(app, "Info.plist")):   # keep a plist the caller already wrote
+    open(os.path.join(app, "Info.plist"), "w").write("""<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Web</string>
 <key>CFBundleIdentifier</key><string>org.iosrt.webdemo</string><key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 """)
