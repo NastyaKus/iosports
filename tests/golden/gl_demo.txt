@@ -1,0 +1,6 @@
+ES2 context: api 2, current 1 (same object 1), layer is CAEAGLLayer 1
+storage from layer 1: 750x1334 px (2x scale), framebuffer complete 1, error 0x0
+extensions include PVRTC 1, BGRA 1, discard 1
+ES1 context: api 1, OES framebuffer complete 1, cleared pixel 0,255,0,255
+shared context: same sharegroup 1; ES 4 context refused 1
+frame 3 presented 1: GL bottom-left 230,26,26, top 26,51,204

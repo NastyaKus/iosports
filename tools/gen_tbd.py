@@ -24,6 +24,12 @@ for f in sorted(defdir.glob("*.def")):
         if m:
             libs.setdefault(m.group(1), {"syms": set(), "classes": set()})["classes"].add(m.group(2))
 libs.setdefault("libSystem", {"syms": set(), "classes": set()})
+# GL entry points bind to the device driver at load time (runtime/src/gl), so
+# they are not in the .def lists: the SDK's OpenGLES headers name them.
+gl = libs.setdefault("OpenGLES", {"syms": set(), "classes": set()})
+for h in sorted((sdk / "include/OpenGLES").rglob("*.h")):
+    for m in re.finditer(r"^GL_API\b[^;(]*?\b(gl[A-Z]\w*)\s*\(", h.read_text(), re.M):
+        gl["syms"].add("_" + m.group(1))
 for lib, d in libs.items():
     p = tbd_path(lib); p.parent.mkdir(parents=True, exist_ok=True)
     out = ["--- !tapi-tbd", "tbd-version: 4", "targets: [ arm64-ios ]", f"install-name: '{install_name(lib)}'",

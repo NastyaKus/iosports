@@ -43,4 +43,4 @@ case $target in
     echo "== building android-arm64"
     QO=$(qjs_objs "$TC/bin/clang" aarch64-linux-android29 android)
     "$TC/bin/clang" --target=aarch64-linux-android29 $CFLAGS -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB $CSRCS $QO \
-        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lz -lm ;; esac
+        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lz -ldl -lm ;; esac

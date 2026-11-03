@@ -57,6 +57,7 @@ cat > "$S/Storyboard.app/Info.plist" <<PL
 <key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
 app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
+app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES
 rm -rf "$S/WebJS.app"; mkdir -p "$S/WebJS.app"
 app "$S/WebJS.app/WebJS" 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_webjs_bundle.py" "$S/WebJS.app"
@@ -139,6 +140,17 @@ for flavor in linux-aarch64 android-arm64; do
   IOSRT_HEADLESS_FRAMES=16 IOSRT_SCRIPT="4:tap:293,395;6:tap:75,395;8:tap:293,395;10:tap:293,395;12:tap:336,20" $R "$S/WebJS.app" >"$T/out.txt" 2>&1; rc=$?
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/webjs_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "webjs_demo (JavaScript + DOM: click handlers, elementFromPoint, iframe bridge, timers)"; else ko "webjs_demo rc=$rc" "$T/diff.txt"; fi
+  # 3k. OpenGL ES: EAGL contexts (ES 2, ES 1 + OES FBOs, sharegroups), layer-backed renderbuffer, present into the layer (null GL)
+  rm -f "$T/gl.png"
+  IOSRT_HEADLESS_FRAMES=8 IOSRT_PNG_OUT="$T/gl.png" $R "$S/gl_demo" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  # the presented frame: blue, with the scissored red rectangle at the bottom left (GL's origin)
+  px=$(python3 -I -c "
+import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size
+print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h - 10)))" "$T/gl.png" 2>/dev/null)
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/gl_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q '^image 0,0 375x667 px=750x1334' "$T/out.txt" && [ "$px" = "(26, 51, 204) (230, 26, 26) (26, 51, 204)" ]; then ok "gl_demo (EAGL + renderbuffer from CAEAGLLayer + present, ES 1/2 contexts)"; else echo "       pixels: $px"; ko "gl_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

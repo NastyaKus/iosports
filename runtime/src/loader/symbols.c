@@ -167,6 +167,11 @@ void *rt_resolve_symbol(struct rt_image *img, const char *name, const char *lib,
     if (e) { img->n_resolved++; return e->addr; }
     void *a = self_symbol(img, name);           /* weak definitions inside the app itself */
     if (a) { img->n_resolved++; return a; }
+    if (!strcmp(lib, "OpenGLES")) {             /* GL binds to the device driver (or the null GL) */
+        void *rt_gl_resolve(const char *mangled);
+        a = rt_gl_resolve(name);
+        if (a) { img->n_resolved++; return a; }
+    }
     a = rt_platform_dlsym_fallback(name);
     if (a) { img->n_resolved++; return a; }
     if (weak_import) { note_missing(img, name, lib, 1); return NULL; }

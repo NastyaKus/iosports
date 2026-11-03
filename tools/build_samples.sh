@@ -28,6 +28,7 @@ python3 -I "$root/tools/mknib.py" "$out/NIB Demo.app/Main.nib"
 mkapp "Navigation Demo" NavDemo org.iosrt.sample.nav 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -framework CoreGraphics
 mkapp "Web Demo" Web org.iosrt.sample.web 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_web_bundle.py" "$out/Web Demo.app"
+mkapp "OpenGL ES Demo" GLDemo org.iosrt.sample.gl 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES
 mkapp "Web Script Demo" WebJS org.iosrt.sample.webjs 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_webjs_bundle.py" "$out/Web Script Demo.app"
 mkapp "Storyboard Demo" Storyboard org.iosrt.sample.storyboard 12.0 "$root/samples/storyboard_demo/main.m" $F -framework UIKit -framework CoreGraphics
