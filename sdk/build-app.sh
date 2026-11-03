@@ -21,5 +21,5 @@ while [ $# -gt 0 ]; do
   esac
 done
 $LD -arch arm64 -platform_version ios $ver $ver -syslibroot "$sdk" -F"$sdk/System/Library/Frameworks" \
-    -L"$sdk/usr/lib" -lSystem -lobjc $fw $chained $objs -o "$out"
+    -L"$sdk/usr/lib" -lSystem -lobjc -framework CoreFoundation $fw $chained $objs -o "$out"
 rm -rf "$tmp"

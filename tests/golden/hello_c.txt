@@ -1,0 +1,10 @@
+hello from an iOS arm64 Mach-O
+argc=1 argv0-is-set=yes
+ints: -42 42 -1234567890123 9000000000 ff 00007|3   |
+floats: 3.142 0.5 1.234568e+04
+mixed: answer=42, ok, 99.50%
+area(square, 2) = 4.0000
+area(circle, 2) = 12.5664
+sorted: 1 2 3 5 7 9
+fib(20)=6765 sqrt(2)=1.414214 (len 29)
+stderr works

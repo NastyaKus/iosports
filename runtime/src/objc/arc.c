@@ -23,6 +23,21 @@ static struct obj_header *hdr(id o) {
     return h->magic == OBJ_MAGIC ? h : NULL;
 }
 
+int rt_class_has_own_method(Class cls, SEL sel);
+struct rt_method *rt_find_method(Class cls, SEL sel);
+/* ARC/C++ ivar construction & destruction: .cxx_construct runs root-first,
+ * .cxx_destruct runs leaf-first, each only for classes that define it. */
+static void call_cxx_construct(id o, Class c) {
+    if (!c) return;
+    call_cxx_construct(o, c->superclass);
+    SEL s = rt_sel(".cxx_construct");
+    if ((rt_cls(c)->flags & RT_CLS_GUEST) && rt_class_has_own_method(c, s)) ((void (*)(id, SEL))rt_find_method(c, s)->imp)(o, s);
+}
+static void call_cxx_destruct(id o) {
+    SEL s = rt_sel(".cxx_destruct");
+    for (Class c = o->isa; c; c = c->superclass)
+        if ((rt_cls(c)->flags & RT_CLS_GUEST) && rt_class_has_own_method(c, s)) ((void (*)(id, SEL))rt_find_method(c, s)->imp)(o, s);
+}
 id rt_alloc_instance(Class cls, size_t extra) {
     size_t sz = rt_cls(cls)->instance_size + extra;
     if (sz < sizeof(void *)) sz = sizeof(void *);
@@ -30,6 +45,7 @@ id rt_alloc_instance(Class cls, size_t extra) {
     h->magic = OBJ_MAGIC; h->refcnt = 1;
     id o = (id)(h + 1);
     o->isa = cls;
+    if (rt_cls(cls)->flags & RT_CLS_GUEST) call_cxx_construct(o, cls);
     return o;
 }
 
@@ -39,6 +55,7 @@ static void assoc_clear(id obj);
 void rt_dealloc_instance(id o) {
     struct obj_header *h = hdr(o);
     if (!h) return;
+    call_cxx_destruct(o);
     weak_clear(o);
     assoc_clear(o);
     h->magic = 0;

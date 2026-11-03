@@ -13,9 +13,9 @@ CFLAGS="-std=gnu11 -O2 -g -fsigned-char -Wall -Wextra -Wno-unused-parameter -Wno
 NDK=${ANDROID_NDK:-/opt/android-sdk/ndk/27.2.12479018}
 build() { # name cc target extra
     echo "== building $1"
-    $2 --target=$3 $CFLAGS $SRCS -o "$out/iosrt-run-$1" -static -lpthread -lm $4
+    $2 --target=$3 $CFLAGS $SRCS -o "$out/iosrt-run-$1" -static $4 -lm
 }
 case $target in
-  linux|all) build linux-aarch64 clang aarch64-linux-gnu "-fuse-ld=lld" ;; esac
+  linux|all) build linux-aarch64 clang aarch64-linux-gnu "-fuse-ld=lld -lpthread" ;; esac
 case $target in
   android|all) build android-arm64 "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" aarch64-linux-android29 "" ;; esac

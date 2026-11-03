@@ -11,8 +11,8 @@ typedef bool BOOL;
 #define YES ((BOOL)1)
 #define NO ((BOOL)0)
 #ifndef nil
-#define nil ((id)0)
+#define nil ((void *)0)
 #endif
 #ifndef Nil
-#define Nil ((Class)0)
+#define Nil ((void *)0)
 #endif

@@ -625,3 +625,5 @@ uint32_t iosrt_mach_task_self_ = 0x103;
 unsigned long iosrt_vm_page_size = 16384;
 int iosrt_pthread_attr_setdetachstate(pthread_attr_t *a, int st) { return pthread_attr_setdetachstate(a, st == 2 ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE); }
 int iosrt_pthread_setschedparam(pthread_t t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
+_Noreturn void iosrt_unwind_resume(void *exc) { (void)exc; rt_guest_exit(72, "exception unwinding (_Unwind_Resume) is not supported"); }
+_Noreturn void iosrt_cxa_throw(void *exc, void *type, void *dtor) { (void)exc; (void)type; (void)dtor; rt_guest_exit(72, "uncaught C++ exception (C++ exceptions are not supported)"); }
