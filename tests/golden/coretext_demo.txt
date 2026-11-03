@@ -1,0 +1,11 @@
+line: width > 0 1, ascent > descent 1, 2 runs, first run 10 glyphs bold 1, second run starts at 10, x increasing 1
+hit test round trip index 5; truncated line narrower 1, 10 glyphs
+glyphs: W wider than i 1, size 20, xHeight below ascent 1
+line drawn, pen advanced by the line width: 1
+frame: 4 lines, suggested height > 3 lines: 1, fits whole string: 1, first line centered: 1, lines go down: 1
+ctrun 20,60 size=18 rgba(255,0,0,1.00) "Death Worm"
+ctrun 146.83,60 size=18 rgba(0,0,0,1.00) " eats the desert"
+ctrun 44.62,360 size=14 rgba(0,0,0,1.00) "CoreText lays this paragraph out "
+ctrun 43.33,376.29 size=14 rgba(0,0,0,1.00) "in a frame: words wrap at spaces "
+ctrun 52.47,392.59 size=14 rgba(0,0,0,1.00) "and lines stack from the top of "
+ctrun 128.15,408.89 size=14 rgba(0,0,0,1.00) "the path."

@@ -1,0 +1,7 @@
+binary archive starts 'bplist00'; decoded Worm score=1234567890123 ratio=0.75 active=1 items=apple|42|3.5|<null> stats=7
+  cycle intact: 1, buddy Bird, tags 2, when 123456.5, url https://example.com/a?b=c, bytes 3, list mutable 1
+xml archive starts '<?xml'; decoded Worm score=1234567890123 ratio=0.75 active=1 items=apple|42|3.5|<null> stats=7
+  cycle intact: 1, buddy Bird, tags 2, when 123456.5, url https://example.com/a?b=c, bytes 3, list mutable 1
+fixture: settings is GameSettings volume=7 difficulty=hard; legacy is RenamedThing tag=renamed; title 'Death Worm & Co'; numbers 1,2,3; flag 1
+keyed: 1, contains root 1, missing key decodes to (null)
+junk decodes to (null)

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 RT_DECLARE_CLASS(NSObject);
 RT_DECLARE_CLASS(NSMutableArray);
@@ -54,7 +55,7 @@ RT_DEFINE_CLASS(UIAccessibilityElement);
 RT_DEFINE_CLASS(NSLayoutConstraint);
 RT_DEFINE_CLASS(UIVisualEffectView);
 RT_DEFINE_CLASS(UIBlurEffect);
-RT_DEFINE_CLASS(UIStoryboard);
+RT_DEFINE_CLASS(UIStoryboard);   /* implemented in storyboard.c */
 RT_DEFINE_CLASS(UITraitCollection);
 RT_DEFINE_CLASS(UIRefreshControl);
 RT_DEFINE_CLASS(UIPopoverPresentationController);
@@ -91,6 +92,18 @@ static id vc_initWithCoder(id self, SEL s, id coder) {
     if (title) VC(self)->title = objc_retain(title);
     id view = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UIView"));
     if (view) RT_SEND1(void, self, "setView:", id, view);
+    /* storyboard scenes */
+    struct uivc *c = VC(self);
+    #define DEC(k) RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str(k))
+    c->segueTemplates = objc_retain(DEC("UIStoryboardSegueTemplates"));
+    for (size_t i = 0; c->segueTemplates && i < rt_array_count(c->segueTemplates); i++) rt_segue_template_set_source(rt_array_at(c->segueTemplates, i), self);
+    c->viewExternals = objc_retain(DEC("UIExternalObjectsTableForViewLoading"));
+    c->keepAlive = objc_retain(DEC("UITopLevelObjectsToKeepAliveFromStoryboard"));
+    c->sbIdentifier = objc_retain(DEC("UIStoryboardIdentifier"));
+    id item = DEC("UINavigationItem"); if (item) { objc_retain(item); objc_release(c->navItem); c->navItem = item; }
+    id tbi = DEC("UITabBarItem"); if (tbi) { objc_retain(tbi); objc_release(c->tabBarItem); c->tabBarItem = tbi; }
+    if (RT_SEND1(long, coder, "containsValueForKey:", id, rt_str("UIModalPresentationStyle")) & 0xff) c->modalStyle = RT_SEND1(long, coder, "decodeIntegerForKey:", id, rt_str("UIModalPresentationStyle"));
+    #undef DEC
     return self;
 }
 static void vc_dealloc(id self, SEL s) {
@@ -98,6 +111,7 @@ static void vc_dealloc(id self, SEL s) {
     if (c->view && V(c->view)->vc == self) V(c->view)->vc = NULL;
     objc_release(c->view); objc_release(c->title); objc_release(c->nibName); objc_release(c->nibBundle); objc_release(c->children);
     objc_release(c->presented); objc_release(c->navItem); objc_release(c->tabBarItem); objc_release(c->toolbarItems);
+    objc_release(c->storyboard); objc_release(c->segueTemplates); objc_release(c->viewExternals); objc_release(c->keepAlive); objc_release(c->sbIdentifier);
     rt_dealloc_instance(self);
 }
 static id vc_nibName(id self, SEL s) { (void)s; return VC(self)->nibName; }
@@ -106,7 +120,14 @@ static void vc_loadView(id self, SEL s) {
     (void)s; struct uivc *c = VC(self);
     /* NIB: explicit name, else class name, else class name without "Controller" */
     const char *path = NULL;
-    if (c->nibName) path = rt_nib_find(rt_str_utf8(c->nibName), c->nibBundle);
+    static char sbpath[4200];
+    const char *sbdir = c->storyboard ? rt_storyboard_dir(c->storyboard) : NULL;
+    if (sbdir && c->nibName) {   /* a storyboard scene's view nib lives in the storyboard */
+        snprintf(sbpath, sizeof sbpath, "%s/%s.nib", sbdir, rt_str_utf8(c->nibName));
+        if (access(sbpath, F_OK) == 0) path = sbpath;
+    }
+    if (path) {}
+    else if (c->nibName) path = rt_nib_find(rt_str_utf8(c->nibName), c->nibBundle);
     else {
         char n[256]; snprintf(n, sizeof n, "%s", rt_class_name(self->isa));
         char *ctl = strstr(n, "Controller");
@@ -114,7 +135,7 @@ static void vc_loadView(id self, SEL s) {
         if (!path) path = rt_nib_find(n, NULL);
     }
     if (path) {
-        rt_nib_instantiate(path, self, NULL);
+        rt_nib_instantiate(path, self, path == sbpath ? c->viewExternals : NULL);
         if (!c->view) rt_warn("NIB %s did not connect a view to its owner", path);
     }
     if (!c->view) {
@@ -130,7 +151,15 @@ void rt_vc_load_view(id self) {
     c->loaded = 1;
     if (rt_responds(self, rt_sel("loadViewIfNeeded")) && 0) {}
     RT_SEND0(void, self, "loadView");
-    if (c->view) { V(c->view)->vc = self; RT_SEND0(void, self, "viewDidLoad"); }
+    if (c->view) {
+        V(c->view)->vc = self;
+        /* storyboard embed segues run once the view exists, before viewDidLoad */
+        for (size_t i = 0; c->segueTemplates && i < rt_array_count(c->segueTemplates); i++) {
+            id t = rt_array_at(c->segueTemplates, i);
+            if (rt_segue_template_is_embed(t)) rt_segue_template_perform(t, self);
+        }
+        RT_SEND0(void, self, "viewDidLoad");
+    }
 }
 static id vc_view(id self, SEL s) { (void)s; rt_vc_load_view(self); return VC(self)->view; }
 static id vc_viewIfLoaded(id self, SEL s) { (void)s; return VC(self)->view; }
@@ -243,14 +272,37 @@ static void vc_transition(id self, SEL s, id from, id to, double d, unsigned lon
     call_block0(anims);
     if (comp) ((void (*)(void *, long))((struct rt_block *)comp)->invoke)(comp, 1);
 }
-static id vc_storyboard(id self, SEL s) { (void)self; (void)s; return NULL; }
+static id vc_storyboard(id self, SEL s) { (void)s; return VC(self)->storyboard; }
+static void vc_setStoryboard(id self, SEL s, id sb) { (void)s; objc_retain(sb); objc_release(VC(self)->storyboard); VC(self)->storyboard = sb; }
+static rt_bool vc_shouldPerformSegue(id self, SEL s, id ident, id sender) { (void)self; (void)s; (void)ident; (void)sender; return 1; }
+static void vc_prepareForSegue(id self, SEL s, id segue, id sender) { (void)self; (void)s; (void)segue; (void)sender; }
+static void vc_show(id self, SEL s, id vc, id sender) {
+    (void)s; (void)sender;
+    id nav = rt_is_kind_of(self, RT_CLASS(UINavigationController)) ? self : RT_SEND0(id, self, "navigationController");
+    if (nav) RT_SEND2(void, nav, "pushViewController:animated:", id, vc, long, 1);
+    else RT_SEND3(void, self, "presentViewController:animated:completion:", id, vc, long, 1, void *, NULL);
+}
+static void vc_showDetail(id self, SEL s, id vc, id sender) { vc_show(self, s, vc, sender); }
 static CGSize vc_preferredSize(id self, SEL s) { (void)s; return VC(self)->preferredContentSize; }
 static void vc_setPreferredSize(id self, SEL s, CGSize v) { (void)s; VC(self)->preferredContentSize = v; }
 static id vc_toolbarItems(id self, SEL s) { (void)s; return VC(self)->toolbarItems; }
 static void vc_setToolbarItems(id self, SEL s, id v) { (void)s; objc_retain(v); objc_release(VC(self)->toolbarItems); VC(self)->toolbarItems = v; }
 static void vc_setToolbarItemsAnim(id self, SEL s, id v, long a) { (void)a; vc_setToolbarItems(self, s, v); }
 static id vc_traits(id self, SEL s) { (void)self; (void)s; return objc_autorelease(rt_alloc_instance(RT_CLASS(UITraitCollection), 0)); }
-static void vc_performSegue(id self, SEL s, id ident, id sender) { (void)self; (void)s; (void)sender; rt_warn("performSegueWithIdentifier:%s ignored (storyboards are not supported)", ident ? rt_str_utf8(ident) : "?"); }
+static void vc_performSegue(id self, SEL s, id ident, id sender) {
+    (void)s;
+    for (id vc = self; vc; vc = VC(vc)->parent)
+        for (size_t i = 0; VC(vc)->segueTemplates && i < rt_array_count(VC(vc)->segueTemplates); i++) {
+            id t = rt_array_at(VC(vc)->segueTemplates, i), tid = rt_segue_template_identifier(t);
+            if (tid && ident && RT_SEND1(long, tid, "isEqualToString:", id, ident) & 0xff) {
+                if (vc != self) rt_segue_template_set_source(t, self);
+                rt_segue_template_perform(t, sender);
+                return;
+            }
+        }
+    char m[256]; snprintf(m, sizeof m, "Receiver (%s) has no segue with identifier '%s'", rt_class_name(self->isa), ident ? rt_str_utf8(ident) : "?");
+    rt_soft_error(m);
+}
 static id vc_popoverPC(id self, SEL s) { (void)self; (void)s; return NULL; }
 static void vc_setNeedsStatusBarUpdate(id self, SEL s) { (void)self; (void)s; }
 static long vc_statusBarStyle(id self, SEL s) { (void)self; (void)s; return 0; }
@@ -542,6 +594,15 @@ static id nav_popTo(id self, SEL s, id vc, long a) {
     return objc_autorelease(popped);
 }
 static id nav_initWithRoot(id self, SEL s, id root) { self = nav_init(self, s); if (root) nav_push(self, NULL, root, 0); return self; }
+static id nav_initWithCoder(id self, SEL s, id coder) {
+    self = vc_initWithCoder(self, s, coder);
+    nav_ensure(self);
+    NAV(self)->barHidden = RT_SEND1(long, coder, "decodeBoolForKey:", id, rt_str("UINavigationBarHidden")) & 0xff;
+    if (RT_SEND1(long, coder, "containsValueForKey:", id, rt_str("UIToolbarHidden")) & 0xff) NAV(self)->toolbarHidden = RT_SEND1(long, coder, "decodeBoolForKey:", id, rt_str("UIToolbarHidden")) & 0xff;
+    id vcs = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UIViewControllers"));
+    for (size_t i = 0; vcs && i < rt_array_count(vcs); i++) nav_push(self, NULL, rt_array_at(vcs, i), 0);
+    return self;
+}
 static id nav_vcs(id self, SEL s) { (void)s; nav_ensure(self); return objc_autorelease(RT_SEND0(id, NAV(self)->stack, "copy")); }
 static void nav_setVcs(id self, SEL s, id arr, long a) {
     (void)a; nav_ensure(self);
@@ -590,6 +651,13 @@ static void tab_relayout(id self) {
     rt_ui_mark_dirty();
 }
 static void tab_loadView(id self, SEL s) { (void)s; id v = rt_view_new(RT_CLASS(UIView), screen_bounds()); V(v)->autoresizing = 2 | 16; vc_setView(self, NULL, v); objc_release(v); tab_relayout(self); }
+static void tab_setVcs(id self, SEL s, id arr, long a);
+static id tab_initWithCoder(id self, SEL s, id coder) {
+    self = vc_initWithCoder(self, s, coder);
+    id vcs = RT_SEND1(id, coder, "decodeObjectForKey:", id, rt_str("UIViewControllers"));
+    if (vcs) tab_setVcs(self, NULL, vcs, 0);
+    return self;
+}
 static id tab_vcs(id self, SEL s) { (void)s; return TAB(self)->vcs; }
 static void tab_setVcs(id self, SEL s, id arr, long a) {
     (void)s; (void)a; struct uitab *t = TAB(self);
@@ -1336,7 +1404,6 @@ static void lc_activate(Class c, SEL s, id arr) { (void)c; (void)s; (void)arr; }
 static id ve_initWithEffect(id self, SEL s, id effect) { (void)effect; (void)s; self = ((id (*)(id, SEL, CGRect))objc_msgSend)(self, rt_sel("initWithFrame:"), (CGRect){ { 0, 0 }, { 0, 0 } }); RT_SEND1(void, self, "setBackgroundColor:", id, rt_color_make(0.95, 0.95, 0.95, 0.85)); return self; }
 static id ve_contentView(id self, SEL s) { (void)s; return self; }
 static id blur_effect(Class c, SEL s, long style) { (void)s; (void)style; return objc_autorelease(rt_alloc_instance(c, 0)); }
-static id sb_withName(Class c, SEL s, id name, id bundle) { (void)c; (void)s; (void)bundle; rt_warn("UIStoryboard storyboardWithName:%s is not supported", name ? rt_str_utf8(name) : "?"); return NULL; }
 static long tc_idiom(id self, SEL s) { (void)self; (void)s; return 0; }
 static long tc_sizeClassH(id self, SEL s) { (void)self; (void)s; return 1; }
 static long tc_sizeClassV(id self, SEL s) { (void)self; (void)s; return 2; }
@@ -1380,6 +1447,8 @@ void rt_controls2_init(void) {
     IM(vc, "setContentSizeForViewInPopover:", vc_setPreferredSize);
     IM(vc, "toolbarItems", vc_toolbarItems); IM(vc, "setToolbarItems:", vc_setToolbarItems); IM(vc, "setToolbarItems:animated:", vc_setToolbarItemsAnim);
     IM(vc, "traitCollection", vc_traits); IM(vc, "performSegueWithIdentifier:sender:", vc_performSegue);
+    IM(vc, "setStoryboard:", vc_setStoryboard); IM(vc, "shouldPerformSegueWithIdentifier:sender:", vc_shouldPerformSegue);
+    IM(vc, "prepareForSegue:sender:", vc_prepareForSegue); IM(vc, "showViewController:sender:", vc_show); IM(vc, "showDetailViewController:sender:", vc_showDetail);
     IM(vc, "popoverPresentationController", vc_popoverPC); IM(vc, "setEdgesForExtendedLayout:", nopL); IM(vc, "setExtendedLayoutIncludesOpaqueBars:", nopL);
     IM(vc, "setAutomaticallyAdjustsScrollViewInsets:", nopL); IM(vc, "setHidesBottomBarWhenPushed:", nopL); IM(vc, "setDefinesPresentationContext:", nopL);
     IM(vc, "setProvidesPresentationContextTransitionStyle:", nopL); IM(vc, "setModalPresentationCapturesStatusBarAppearance:", nopL);
@@ -1392,6 +1461,7 @@ void rt_controls2_init(void) {
     NEWCLASS(UINavigationController, vc, sizeof(struct uinav) - sizeof(struct uivc));
     Class nav = RT_CLASS(UINavigationController);
     IM(nav, "initWithRootViewController:", nav_initWithRoot); IM(nav, "init", nav_init); IM(nav, "loadView", nav_loadView);
+    IM(nav, "initWithCoder:", nav_initWithCoder);
     IM(nav, "pushViewController:animated:", nav_push); IM(nav, "popViewControllerAnimated:", nav_pop);
     IM(nav, "popToRootViewControllerAnimated:", nav_popToRoot); IM(nav, "popToViewController:animated:", nav_popTo);
     IM(nav, "topViewController", nav_top); IM(nav, "visibleViewController", nav_top); IM(nav, "viewControllers", nav_vcs);
@@ -1403,7 +1473,7 @@ void rt_controls2_init(void) {
     IM(nav, "viewWillAppear:", nav_viewWillAppear);
     NEWCLASS(UITabBarController, vc, sizeof(struct uitab) - sizeof(struct uivc));
     Class tab = RT_CLASS(UITabBarController);
-    IM(tab, "loadView", tab_loadView); IM(tab, "viewControllers", tab_vcs); IM(tab, "setViewControllers:", tab_setVcs1); IM(tab, "setViewControllers:animated:", tab_setVcs);
+    IM(tab, "initWithCoder:", tab_initWithCoder); IM(tab, "loadView", tab_loadView); IM(tab, "viewControllers", tab_vcs); IM(tab, "setViewControllers:", tab_setVcs1); IM(tab, "setViewControllers:animated:", tab_setVcs);
     IM(tab, "selectedIndex", tab_selected); IM(tab, "setSelectedIndex:", tab_setSelected); IM(tab, "selectedViewController", tab_selectedVC);
     IM(tab, "setSelectedViewController:", tab_setSelectedVC); IM(tab, "tabBar", tab_bar); IM(tab, "delegate", tab_delegate); IM(tab, "setDelegate:", tab_setDelegate);
 
@@ -1587,7 +1657,7 @@ void rt_controls2_init(void) {
     NEWCLASS(UIVisualEffectView, v, 0);
     IM(RT_CLASS(UIVisualEffectView), "initWithEffect:", ve_initWithEffect); IM(RT_CLASS(UIVisualEffectView), "contentView", ve_contentView);
     NEWCLASS(UIBlurEffect, o, 0); CM(RT_CLASS(UIBlurEffect), "effectWithStyle:", blur_effect);
-    NEWCLASS(UIStoryboard, o, 0); CM(RT_CLASS(UIStoryboard), "storyboardWithName:bundle:", sb_withName);
+    void rt_storyboard_init(void); rt_storyboard_init();
     NEWCLASS(UITraitCollection, o, 0);
     Class tc = RT_CLASS(UITraitCollection);
     IM(tc, "userInterfaceIdiom", tc_idiom); IM(tc, "horizontalSizeClass", tc_sizeClassH); IM(tc, "verticalSizeClass", tc_sizeClassV);

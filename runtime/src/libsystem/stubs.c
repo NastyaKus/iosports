@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <dlfcn.h>
 #include <sys/utsname.h>
 
@@ -18,6 +19,47 @@
 
 /* ---------------------------------------------------------------- mach */
 uint32_t iosrt_mach_host_self(void) { return 0x203; }
+/* clock services: SYSTEM_CLOCK (0, uptime) and CALENDAR_CLOCK (1, wall time) */
+int iosrt_host_get_clock_service(uint32_t host, int clock_id, uint32_t *out) {
+    (void)host; if (clock_id < 0 || clock_id > 2) return 4 /* KERN_INVALID_ARGUMENT */;
+    if (out) *out = 0x400 + (uint32_t)clock_id;
+    return KERN_SUCCESS;
+}
+int iosrt_clock_get_time(uint32_t serv, struct { uint32_t sec; int32_t nsec; } *t) {
+    struct timespec ts; clock_gettime(serv == 0x401 ? CLOCK_REALTIME : CLOCK_MONOTONIC, &ts);
+    if (t) { t->sec = (uint32_t)ts.tv_sec; t->nsec = (int32_t)ts.tv_nsec; }
+    return KERN_SUCCESS;
+}
+/* threads are never cancelled by the runtime: report the defaults */
+int iosrt_pthread_setcanceltype(int type, int *old) { (void)type; if (old) *old = 0 /* DEFERRED */; return 0; }
+int iosrt_pthread_setcancelstate(int state, int *old) { (void)state; if (old) *old = 1 /* ENABLE (Darwin) */; return 0; }
+
+/* BSD hash_create/hash_search (string keys -> data pointers) */
+struct hbucket { char *key; char *data; struct hbucket *next; };
+struct htable { int size; struct hbucket **b; };
+static unsigned hstr(const char *k, int n) { unsigned h = 0; while (*k) h = h * 31 + (unsigned char)*k++; return h % (unsigned)n; }
+void *iosrt_hash_create(int size) {
+    struct htable *t = calloc(1, sizeof *t); t->size = size > 0 ? size : 64; t->b = calloc((size_t)t->size, sizeof *t->b);
+    return t;
+}
+/* finds key; with a datum, inserts it or replaces the old one (after replace_func(old)); returns the stored datum */
+char *iosrt_hash_search(struct htable *t, const char *key, char *datum, void (*replace_func)(char *)) {
+    if (!t || !key) return NULL;
+    unsigned h = hstr(key, t->size);
+    for (struct hbucket *e = t->b[h]; e; e = e->next)
+        if (!strcmp(e->key, key)) {
+            if (datum) { if (replace_func) replace_func(e->data); e->data = datum; }
+            return e->data;
+        }
+    if (!datum) return NULL;
+    struct hbucket *e = calloc(1, sizeof *e); e->key = strdup(key); e->data = datum; e->next = t->b[h]; t->b[h] = e;
+    return datum;
+}
+void iosrt_hash_destroy(struct htable *t, const char *key, void (*free_func)(char *)) {
+    (void)key; if (!t) return;
+    for (int i = 0; i < t->size; i++) for (struct hbucket *e = t->b[i], *n; e; e = n) { n = e->next; if (free_func) free_func(e->data); free(e->key); free(e); }
+    free(t->b); free(t);
+}
 uint32_t iosrt_mach_thread_self(void) { return 0x303; }
 int iosrt_host_page_size(uint32_t host, unsigned long *out) { (void)host; if (out) *out = 16384; return KERN_SUCCESS; }
 int iosrt_kern_failure(void) { return KERN_FAILURE; }

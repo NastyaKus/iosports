@@ -43,8 +43,6 @@ RT_DEFINE_CLASS(NSFormatter);
 RT_DEFINE_CLASS(NSDateFormatter);
 RT_DEFINE_CLASS(NSNumberFormatter);
 RT_DEFINE_CLASS(NSCoder);
-RT_DEFINE_CLASS(NSKeyedArchiver);
-RT_DEFINE_CLASS(NSKeyedUnarchiver);
 RT_DEFINE_CLASS(NSJSONSerialization);
 RT_DEFINE_CLASS(NSPropertyListSerialization);
 RT_DEFINE_CLASS(NSScanner);
@@ -209,9 +207,6 @@ static void nf_setMax(id self, SEL s, unsigned long v) { (void)s; ((struct nsfmt
 static void nf_setMin(id self, SEL s, unsigned long v) { (void)s; ((struct nsfmt *)self)->minFrac = (long)v; }
 
 /* ============================================================== keyed archiving */
-static id ka_archivedData(Class c, SEL s, id root) { (void)c; (void)s; (void)root; return objc_autorelease(rt_data_new("", 0)); }
-static rt_bool ka_archiveToFile(Class c, SEL s, id root, id path) { (void)c; (void)s; (void)root; (void)path; return 0; }
-static id ku_unarchive(Class c, SEL s, id data) { (void)c; (void)s; (void)data; return NULL; }
 static id coder_nil(id self, SEL s, id k) { (void)self; (void)s; (void)k; return NULL; }
 static long coder_zero(id self, SEL s, id k) { (void)self; (void)s; (void)k; return 0; }
 static double coder_zerod(id self, SEL s, id k) { (void)self; (void)s; (void)k; return 0; }
@@ -407,7 +402,8 @@ id rt_plist_xml(id o) {
     plx(&sb, o, 0); rt_sb_puts(&sb, "</plist>\n");
     id r = objc_autorelease(rt_data_new(sb.buf, sb.len)); free(sb.buf); return r;
 }
-static id pl_data(Class c, SEL s, id o, long fmt, unsigned long opts, id *err) { (void)c; (void)s; (void)fmt; (void)opts; if (err) *err = NULL; return rt_plist_xml(o); }
+id rt_bplist_write(id plist);
+static id pl_data(Class c, SEL s, id o, long fmt, unsigned long opts, id *err) { (void)c; (void)s; (void)opts; if (err) *err = NULL; return fmt == 200 ? rt_bplist_write(o) : rt_plist_xml(o); }
 static rt_bool coll_writeToFile(id self, SEL s, id path, long atomic) {
     (void)s; (void)atomic; id d = rt_plist_xml(self); size_t n; const void *b = rt_data_bytes(d, &n);
     FILE *f = fopen(rt_str_utf8(path), "wb"); if (!f) return 0; fwrite(b, 1, n, f); fclose(f); return 1;
@@ -458,21 +454,196 @@ static id arr_sortedDescs(id self, SEL s, id descs) { (void)s; return RT_SEND2(i
 static void marr_sortDescs(id self, SEL s, id descs) { id r = arr_sortedDescs(self, s, descs); RT_SEND0(void, self, "removeAllObjects"); RT_SEND1(void, self, "addObjectsFromArray:", id, r); }
 
 /* =============================================================== NSAttributedString */
-struct nsas { Class isa; id str; id attrs; };
-static id as_initStr(id self, SEL s, id str) { (void)s; struct nsas *a = (struct nsas *)self; a->str = RT_SEND0(id, RT_SEND1(id, (id)RT_CLASS(NSMutableString), "stringWithString:", id, str ? str : rt_str("")), "retain"); return self; }
-static id as_initStrAttrs(id self, SEL s, id str, id attrs) { as_initStr(self, s, str); ((struct nsas *)self)->attrs = objc_retain(attrs); return self; }
+/* The string plus runs of (length, attributes); run lengths always add up to the string length. */
+struct asrun { unsigned long len; id attrs; };
+struct nsas { Class isa; id str; struct asrun *runs; size_t n, cap; };
+#define AS(x) ((struct nsas *)(x))
+static id empty_attrs(void) { return objc_autorelease(rt_dict_new(NULL, NULL, 0)); }
+static void as_insert_run(struct nsas *a, size_t at, unsigned long len, id attrs) {
+    if (a->n == a->cap) { a->cap = a->cap ? a->cap * 2 : 4; a->runs = realloc(a->runs, a->cap * sizeof *a->runs); }
+    memmove(a->runs + at + 1, a->runs + at, (a->n - at) * sizeof *a->runs);
+    a->runs[at].len = len; a->runs[at].attrs = RT_SEND0(id, attrs ? attrs : empty_attrs(), "copy");
+    a->n++;
+}
+static void as_remove_run(struct nsas *a, size_t at) { objc_release(a->runs[at].attrs); memmove(a->runs + at, a->runs + at + 1, (a->n - at - 1) * sizeof *a->runs); a->n--; }
+static unsigned long as_length(id self, SEL s) { (void)s; return RT_SEND0(unsigned long, AS(self)->str, "length"); }
+/* index of the run that starts at pos, splitting a run if needed; returns n if pos is the end */
+static size_t as_split(struct nsas *a, unsigned long pos) {
+    unsigned long at = 0;
+    for (size_t i = 0; i < a->n; i++) {
+        if (pos == at) return i;
+        if (pos < at + a->runs[i].len) {
+            unsigned long first = pos - at;
+            as_insert_run(a, i + 1, a->runs[i].len - first, a->runs[i].attrs);
+            a->runs[i].len = first;
+            return i + 1;
+        }
+        at += a->runs[i].len;
+    }
+    return a->n;
+}
+static void as_merge(struct nsas *a) {
+    for (size_t i = 0; i + 1 < a->n;) {
+        if (!a->runs[i + 1].len) { as_remove_run(a, i + 1); continue; }
+        if (!a->runs[i].len) { as_remove_run(a, i); continue; }
+        if (RT_SEND1(long, a->runs[i].attrs, "isEqualToDictionary:", id, a->runs[i + 1].attrs) & 0xff) { a->runs[i].len += a->runs[i + 1].len; as_remove_run(a, i + 1); continue; }
+        i++;
+    }
+    if (a->n == 1 && !a->runs[0].len) as_remove_run(a, 0);
+}
+static NSRange clamp_r(id self, NSRange r) { unsigned long L = as_length(self, NULL); if (r.location > L) r.location = L; if (r.location + r.length > L) r.length = L - r.location; return r; }
+static id as_initStrAttrs(id self, SEL s, id str, id attrs) {
+    (void)s; struct nsas *a = AS(self);
+    a->str = objc_retain(RT_SEND1(id, (id)RT_CLASS(NSMutableString), "stringWithString:", id, str ? str : rt_str("")));
+    unsigned long L = as_length(self, NULL);
+    if (L) as_insert_run(a, 0, L, attrs);
+    return self;
+}
+static id as_initStr(id self, SEL s, id str) { return as_initStrAttrs(self, s, str, NULL); }
 static id as_init(id self, SEL s) { return as_initStr(self, s, NULL); }
-static id as_string(id self, SEL s) { (void)s; return ((struct nsas *)self)->str; }
-static unsigned long as_length(id self, SEL s) { (void)s; return RT_SEND0(unsigned long, ((struct nsas *)self)->str, "length"); }
-static id as_attrsAt(id self, SEL s, unsigned long i, NSRange *r) { (void)s; (void)i; struct nsas *a = (struct nsas *)self; if (r) { r->location = 0; r->length = as_length(self, s); } return a->attrs ? a->attrs : objc_autorelease(rt_dict_new(NULL, NULL, 0)); }
-static id as_attrAt(id self, SEL s, id name, unsigned long i, NSRange *r) { id d = as_attrsAt(self, s, i, r); return rt_dict_get(d, name); }
-static void as_append(id self, SEL s, id other) { (void)s; RT_SEND1(void, ((struct nsas *)self)->str, "appendString:", id, RT_SEND0(id, other, "string")); }
-static void as_addAttr(id self, SEL s, id name, id value, NSRange r) { (void)s; (void)r; struct nsas *a = (struct nsas *)self; if (!a->attrs) a->attrs = rt_dict_new(NULL, NULL, 0); if (name && value) rt_dict_set(a->attrs, name, value); }
-static void as_addAttrs(id self, SEL s, id attrs, NSRange r) { id keys = RT_SEND0(id, attrs, "allKeys"); for (size_t i = 0; i < rt_array_count(keys); i++) as_addAttr(self, s, rt_array_at(keys, i), rt_dict_get(attrs, rt_array_at(keys, i)), r); }
-static void as_replace(id self, SEL s, NSRange r, id str) { (void)s; RT_SEND2(void, ((struct nsas *)self)->str, "replaceCharactersInRange:withString:", NSRange, r, id, str); }
-static id as_copy(id self, SEL s, void *z) { (void)s; (void)z; struct nsas *a = (struct nsas *)self; return as_initStrAttrs(rt_alloc_instance(RT_CLASS(NSAttributedString), 0), NULL, a->str, a->attrs); }
-static id as_mcopy(id self, SEL s, void *z) { (void)s; (void)z; struct nsas *a = (struct nsas *)self; return as_initStrAttrs(rt_alloc_instance(RT_CLASS(NSMutableAttributedString), 0), NULL, a->str, a->attrs); }
-static id as_desc(id self, SEL s) { (void)s; return ((struct nsas *)self)->str; }
+static id as_initWithAS(id self, SEL s, id other) {
+    (void)s; struct nsas *a = AS(self);
+    a->str = objc_retain(RT_SEND1(id, (id)RT_CLASS(NSMutableString), "stringWithString:", id, other ? RT_SEND0(id, other, "string") : rt_str("")));
+    unsigned long L = as_length(self, NULL);
+    for (unsigned long i = 0; i < L;) {
+        NSRange eff = { 0, 0 };
+        id at = ((id (*)(id, SEL, unsigned long, NSRange *))objc_msgSend)(other, rt_sel("attributesAtIndex:effectiveRange:"), i, &eff);
+        unsigned long end = eff.location + eff.length; if (end <= i || end > L) end = L;
+        as_insert_run(a, a->n, end - i, at);
+        i = end;
+    }
+    return self;
+}
+static void as_dealloc(id self, SEL s) { (void)s; struct nsas *a = AS(self); for (size_t i = 0; i < a->n; i++) objc_release(a->runs[i].attrs); free(a->runs); objc_release(a->str); rt_dealloc_instance(self); }
+static id as_string(id self, SEL s) { (void)s; return AS(self)->str; }
+static id as_attrsAt(id self, SEL s, unsigned long i, NSRange *r) {
+    (void)s; struct nsas *a = AS(self); unsigned long at = 0;
+    for (size_t k = 0; k < a->n; k++) {
+        if (i < at + a->runs[k].len) { if (r) { r->location = at; r->length = a->runs[k].len; } return a->runs[k].attrs; }
+        at += a->runs[k].len;
+    }
+    if (r) { r->location = at; r->length = 0; }
+    return empty_attrs();
+}
+static id as_attrsAtLongest(id self, SEL s, unsigned long i, NSRange *r, NSRange limit) { (void)limit; return as_attrsAt(self, s, i, r); }
+/* one attribute: the effective range spans neighbouring runs with an equal value */
+static id as_attrAt(id self, SEL s, id name, unsigned long i, NSRange *r) {
+    (void)s; struct nsas *a = AS(self); unsigned long at = 0;
+    for (size_t k = 0; k < a->n; k++) {
+        if (i < at + a->runs[k].len) {
+            id v = rt_dict_get(a->runs[k].attrs, name);
+            if (r) {
+                unsigned long lo = at, hi = at + a->runs[k].len;
+                for (size_t j = k; j-- > 0;) { id w = rt_dict_get(a->runs[j].attrs, name); if (w != v && !(w && v && (RT_SEND1(long, w, "isEqual:", id, v) & 0xff))) break; lo -= a->runs[j].len; }
+                for (size_t j = k + 1; j < a->n; j++) { id w = rt_dict_get(a->runs[j].attrs, name); if (w != v && !(w && v && (RT_SEND1(long, w, "isEqual:", id, v) & 0xff))) break; hi += a->runs[j].len; }
+                r->location = lo; r->length = hi - lo;
+            }
+            return v;
+        }
+        at += a->runs[k].len;
+    }
+    if (r) { r->location = at; r->length = 0; }
+    return NULL;
+}
+static id as_attrAtLongest(id self, SEL s, id name, unsigned long i, NSRange *r, NSRange limit) { (void)limit; return as_attrAt(self, s, name, i, r); }
+/* apply fn to every run inside r (split at its edges) */
+static void as_each_in(id self, NSRange r, void (*fn)(struct asrun *, void *), void *ctx) {
+    struct nsas *a = AS(self); r = clamp_r(self, r);
+    if (!r.length) return;
+    size_t b = as_split(a, r.location), e = as_split(a, r.location + r.length);
+    for (size_t k = b; k < e; k++) fn(&a->runs[k], ctx);
+    as_merge(a);
+}
+struct kv { id key, value, dict; };
+static void run_set(struct asrun *run, void *p) { struct kv *kv = p; id m = RT_SEND0(id, run->attrs, "mutableCopy"); if (kv->dict) RT_SEND1(void, m, "addEntriesFromDictionary:", id, kv->dict); else if (kv->value) rt_dict_set(m, kv->key, kv->value); objc_release(run->attrs); run->attrs = RT_SEND0(id, m, "copy"); objc_release(m); }
+static void run_remove(struct asrun *run, void *p) { struct kv *kv = p; id m = RT_SEND0(id, run->attrs, "mutableCopy"); RT_SEND1(void, m, "removeObjectForKey:", id, kv->key); objc_release(run->attrs); run->attrs = RT_SEND0(id, m, "copy"); objc_release(m); }
+static void run_replace(struct asrun *run, void *p) { struct kv *kv = p; objc_release(run->attrs); run->attrs = RT_SEND0(id, kv->dict ? kv->dict : empty_attrs(), "copy"); }
+static void as_addAttr(id self, SEL s, id name, id value, NSRange r) { (void)s; struct kv kv = { name, value, NULL }; if (name && value) as_each_in(self, r, run_set, &kv); }
+static void as_addAttrs(id self, SEL s, id attrs, NSRange r) { (void)s; struct kv kv = { NULL, NULL, attrs }; if (attrs) as_each_in(self, r, run_set, &kv); }
+static void as_setAttrs(id self, SEL s, id attrs, NSRange r) { (void)s; struct kv kv = { NULL, NULL, attrs }; as_each_in(self, r, run_replace, &kv); }
+static void as_removeAttr(id self, SEL s, id name, NSRange r) { (void)s; struct kv kv = { name, NULL, NULL }; if (name) as_each_in(self, r, run_remove, &kv); }
+/* replace characters; new text takes the attributes of the first replaced character (or the one before) */
+static void as_replace(id self, SEL s, NSRange r, id str) {
+    (void)s; struct nsas *a = AS(self); r = clamp_r(self, r);
+    unsigned long ins = str ? RT_SEND0(unsigned long, str, "length") : 0;
+    id inherit = NULL;
+    if (a->n) { unsigned long p = r.location < as_length(self, NULL) ? r.location : (r.location ? r.location - 1 : 0); inherit = as_attrsAt(self, NULL, p, NULL); }
+    objc_retain(inherit);
+    size_t b = as_split(a, r.location), e = as_split(a, r.location + r.length);
+    for (size_t k = e; k-- > b;) as_remove_run(a, k);
+    RT_SEND2(void, a->str, "replaceCharactersInRange:withString:", NSRange, r, id, str ? str : rt_str(""));
+    if (ins) as_insert_run(a, b, ins, inherit);
+    objc_release(inherit);
+    as_merge(a);
+}
+static void as_delete(id self, SEL s, NSRange r) { as_replace(self, s, r, NULL); }
+static void as_replaceWithAS(id self, SEL s, NSRange r, id other) {
+    (void)s; struct nsas *a = AS(self); r = clamp_r(self, r);
+    size_t b = as_split(a, r.location), e = as_split(a, r.location + r.length);
+    for (size_t k = e; k-- > b;) as_remove_run(a, k);
+    id ostr = other ? RT_SEND0(id, other, "string") : rt_str("");
+    RT_SEND2(void, a->str, "replaceCharactersInRange:withString:", NSRange, r, id, ostr);
+    unsigned long L = RT_SEND0(unsigned long, ostr, "length"), at = b;
+    for (unsigned long i = 0; i < L;) {
+        NSRange eff = { 0, 0 };
+        id attrs = ((id (*)(id, SEL, unsigned long, NSRange *))objc_msgSend)(other, rt_sel("attributesAtIndex:effectiveRange:"), i, &eff);
+        unsigned long end = eff.location + eff.length; if (end <= i || end > L) end = L;
+        as_insert_run(a, at++, end - i, attrs);
+        i = end;
+    }
+    as_merge(a);
+}
+static void as_append(id self, SEL s, id other) { NSRange r = { as_length(self, NULL), 0 }; as_replaceWithAS(self, s, r, other); }
+static void as_insertAS(id self, SEL s, id other, unsigned long at) { NSRange r = { at, 0 }; as_replaceWithAS(self, s, r, other); }
+static void as_setAS(id self, SEL s, id other) { NSRange r = { 0, as_length(self, NULL) }; as_replaceWithAS(self, s, r, other); }
+static id as_substring(id self, SEL s, NSRange r) {
+    (void)s; r = clamp_r(self, r);
+    id sub = RT_SEND1(id, AS(self)->str, "substringWithRange:", NSRange, r);
+    id out = as_initStr(rt_alloc_instance(RT_CLASS(NSAttributedString), 0), NULL, sub);
+    struct nsas *o = AS(out); for (size_t k = 0; k < o->n; k++) objc_release(o->runs[k].attrs);
+    o->n = 0;
+    for (unsigned long i = r.location; i < r.location + r.length;) {
+        NSRange eff; id attrs = as_attrsAt(self, NULL, i, &eff);
+        unsigned long end = eff.location + eff.length; if (end > r.location + r.length) end = r.location + r.length; if (end <= i) end = r.location + r.length;
+        as_insert_run(o, o->n, end - i, attrs);
+        i = end;
+    }
+    return objc_autorelease(out);
+}
+static void as_enumAttrs(id self, SEL s, NSRange r, unsigned long opts, void *blk) {
+    (void)s; (void)opts; r = clamp_r(self, r);
+    struct nsas *a = AS(self); unsigned long at = 0; signed char stop = 0;
+    for (size_t k = 0; k < a->n && !stop; k++) {
+        unsigned long lo = at, hi = at + a->runs[k].len; at = hi;
+        if (hi <= r.location || lo >= r.location + r.length) continue;
+        NSRange rr = { lo < r.location ? r.location : lo, 0 }; rr.length = (hi > r.location + r.length ? r.location + r.length : hi) - rr.location;
+        ((void (*)(void *, id, NSRange, signed char *))((struct rt_block *)blk)->invoke)(blk, a->runs[k].attrs, rr, &stop);
+    }
+}
+static void as_enumAttr(id self, SEL s, id name, NSRange r, unsigned long opts, void *blk) {
+    (void)s; (void)opts; r = clamp_r(self, r);
+    signed char stop = 0;
+    for (unsigned long i = r.location; i < r.location + r.length && !stop;) {
+        NSRange eff; id v = as_attrAt(self, NULL, name, i, &eff);
+        unsigned long end = eff.location + eff.length; if (end > r.location + r.length) end = r.location + r.length; if (end <= i) end = r.location + r.length;
+        NSRange rr = { i, end - i };
+        ((void (*)(void *, id, NSRange, signed char *))((struct rt_block *)blk)->invoke)(blk, v, rr, &stop);
+        i = end;
+    }
+}
+static id as_clone(id self, Class c) { id o = as_initWithAS(rt_alloc_instance(c, 0), NULL, self); return o; }
+static id as_copy(id self, SEL s, void *z) { (void)s; (void)z; return as_clone(self, RT_CLASS(NSAttributedString)); }
+static id as_mcopy(id self, SEL s, void *z) { (void)s; (void)z; return as_clone(self, RT_CLASS(NSMutableAttributedString)); }
+static id as_desc(id self, SEL s) { (void)s; return AS(self)->str; }
+static rt_bool as_isEqual(id self, SEL s, id o) {
+    (void)s; if (self == o) return 1;
+    if (!o || !rt_is_kind_of(o, RT_CLASS(NSAttributedString))) return 0;
+    if (!(RT_SEND1(long, AS(self)->str, "isEqualToString:", id, AS(o)->str) & 0xff) || AS(self)->n != AS(o)->n) return 0;
+    for (size_t k = 0; k < AS(self)->n; k++)
+        if (AS(self)->runs[k].len != AS(o)->runs[k].len || !(RT_SEND1(long, AS(self)->runs[k].attrs, "isEqualToDictionary:", id, AS(o)->runs[k].attrs) & 0xff)) return 0;
+    return 1;
+}
+static unsigned long as_hash(id self, SEL s) { (void)s; return RT_SEND0(unsigned long, AS(self)->str, "hash"); }
 
 /* ===================================================================== NSFileHandle */
 struct nsfh { Class isa; int fd; long own; };
@@ -761,10 +932,6 @@ void rt_foundation_more2_init(void) {
     IM(cd, "decodeFloatForKey:", coder_zerod); IM(cd, "containsValueForKey:", coder_no); IM(cd, "allowsKeyedCoding", coder_no);
     IM(cd, "encodeObject:forKey:", coder_encode); IM(cd, "encodeInteger:forKey:", coder_encode); IM(cd, "encodeBool:forKey:", coder_encode);
     IM(cd, "encodeDouble:forKey:", coder_encode); IM(cd, "encodeInt:forKey:", coder_encode); IM(cd, "encodeFloat:forKey:", coder_encode);
-    NEWCLASS(NSKeyedArchiver, cd, 0);
-    NEWCLASS(NSKeyedUnarchiver, cd, 0);
-    CM(RT_CLASS(NSKeyedArchiver), "archivedDataWithRootObject:", ka_archivedData); CM(RT_CLASS(NSKeyedArchiver), "archiveRootObject:toFile:", ka_archiveToFile);
-    CM(RT_CLASS(NSKeyedUnarchiver), "unarchiveObjectWithData:", ku_unarchive); CM(RT_CLASS(NSKeyedUnarchiver), "unarchiveObjectWithFile:", ku_unarchive);
 
     NEWCLASS(NSJSONSerialization, o, 0);
     CM(RT_CLASS(NSJSONSerialization), "JSONObjectWithData:options:error:", js_parse);
@@ -794,11 +961,20 @@ void rt_foundation_more2_init(void) {
     NEWCLASS(NSMutableAttributedString, RT_CLASS(NSAttributedString), 0);
     Class as = RT_CLASS(NSAttributedString), mas = RT_CLASS(NSMutableAttributedString);
     IM(as, "init", as_init); IM(as, "initWithString:", as_initStr); IM(as, "initWithString:attributes:", as_initStrAttrs);
+    IM(as, "initWithAttributedString:", as_initWithAS); IM(as, "dealloc", as_dealloc);
     IM(as, "string", as_string); IM(as, "length", as_length); IM(as, "attributesAtIndex:effectiveRange:", as_attrsAt);
-    IM(as, "attribute:atIndex:effectiveRange:", as_attrAt); IM(as, "copyWithZone:", as_copy); IM(as, "mutableCopyWithZone:", as_mcopy);
+    IM(as, "attributesAtIndex:longestEffectiveRange:inRange:", as_attrsAtLongest);
+    IM(as, "attribute:atIndex:effectiveRange:", as_attrAt); IM(as, "attribute:atIndex:longestEffectiveRange:inRange:", as_attrAtLongest);
+    IM(as, "attributedSubstringFromRange:", as_substring);
+    IM(as, "enumerateAttributesInRange:options:usingBlock:", as_enumAttrs); IM(as, "enumerateAttribute:inRange:options:usingBlock:", as_enumAttr);
+    IM(as, "copyWithZone:", as_copy); IM(as, "mutableCopyWithZone:", as_mcopy);
+    IM(as, "isEqual:", as_isEqual); IM(as, "isEqualToAttributedString:", as_isEqual); IM(as, "hash", as_hash);
     IM(as, "description", as_desc);
-    IM(mas, "appendAttributedString:", as_append); IM(mas, "addAttribute:value:range:", as_addAttr); IM(mas, "addAttributes:range:", as_addAttrs);
-    IM(mas, "setAttributes:range:", as_addAttrs); IM(mas, "replaceCharactersInRange:withString:", as_replace); IM(mas, "mutableString", as_string);
+    IM(mas, "appendAttributedString:", as_append); IM(mas, "insertAttributedString:atIndex:", as_insertAS); IM(mas, "setAttributedString:", as_setAS);
+    IM(mas, "replaceCharactersInRange:withAttributedString:", as_replaceWithAS);
+    IM(mas, "addAttribute:value:range:", as_addAttr); IM(mas, "addAttributes:range:", as_addAttrs);
+    IM(mas, "setAttributes:range:", as_setAttrs); IM(mas, "removeAttribute:range:", as_removeAttr);
+    IM(mas, "replaceCharactersInRange:withString:", as_replace); IM(mas, "deleteCharactersInRange:", as_delete); IM(mas, "mutableString", as_string);
     IM(mas, "beginEditing", noop_obj); IM(mas, "endEditing", noop_obj);
 
     NEWCLASS(NSFileHandle, o, sizeof(struct nsfh) - sizeof(void *));

@@ -1,0 +1,5 @@
+setjmp returned 42 after longjmp from depth 5, rounds 2
+longjmp(env, 0) makes setjmp return 1
+clock services ok: 1, uptime monotonic: 1, calendar near NSDate: 1
+hash: worm=longer apple=red missing=(null)
+url io: made 1 wrote 1 copied 1 items a.txt,b.txt read 'hello' plist v missing-remove 0 (error 1) removed 1

@@ -10,7 +10,10 @@ src = root / "runtime/src/uikit"
 out = root / "runtime/src/exports/uikit.def"
 PRIVATE_CLASSES = {"UIButtonContent", "UINibDecoder", "UIRuntimeConnection", "UIRuntimeOutletConnection",
                    "UIRuntimeEventConnection", "UIRuntimeOutletCollectionConnection", "UIProxyObject",
-                   "UIWebBrowserView"}
+                   "UIWebBrowserView", "UIStoryboardScene"}
+# storyboard internals (segue templates and the concrete segue classes) are private in UIKit too
+PRIVATE_PREFIXES = ("UIStoryboardShow", "UIStoryboardPush", "UIStoryboardModal", "UIStoryboardPresentation", "UIStoryboardPopover",
+                    "UIStoryboardReplace", "UIStoryboardEmbed", "UIStoryboardUnwind", "UIStoryboardSegueTemplate")
 
 def lib_for(name):
     n = name.lstrip("k")
@@ -48,7 +51,7 @@ def top_level_chunks(text):
 for f in sorted(src.glob("*.c")):
     raw = f.read_text()
     for c in re.findall(r"RT_DEFINE_CLASS\((\w+)\)", raw):
-        if not c.endswith("Impl") and c not in PRIVATE_CLASSES:
+        if not c.endswith("Impl") and c not in PRIVATE_CLASSES and not c.startswith(PRIVATE_PREFIXES):
             classes[c] = f.name
     for chunk, term in top_level_chunks(strip(raw)):
         if not chunk or re.match(r"(static|extern|typedef|struct\s+\w+\s*$)", chunk):

@@ -35,6 +35,28 @@ app "$S/nav_demo" 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -fram
 rm -rf "$S/Web.app"; mkdir -p "$S/Web.app"
 app "$S/Web.app/Web" 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_web_bundle.py" "$S/Web.app"
+app "$S/sys_demo" 12.0 "$root/samples/sys_demo/main.m" $F
+rm -rf "$S/Archive.app"; mkdir -p "$S/Archive.app"
+app "$S/Archive.app/Archive" 12.0 "$root/samples/archive_demo/main.m" $F
+python3 -I "$root/tests/make_archive_fixture.py" "$S/Archive.app"
+rm -rf "$S/KeyedNib.app"; mkdir -p "$S/KeyedNib.app"
+app "$S/KeyedNib.app/KeyedNib" 12.0 "$root/samples/keyed_nib_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" --main-window "$S/KeyedNib.app/MainWindow.nib"
+cat > "$S/KeyedNib.app/Info.plist" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>KeyedNib</string>
+<key>CFBundleIdentifier</key><string>org.iosrt.keyednib</string><key>NSMainNibFile</key><string>MainWindow</string></dict></plist>
+PL
+rm -rf "$S/Storyboard.app"; mkdir -p "$S/Storyboard.app"
+app "$S/Storyboard.app/Storyboard" 12.0 "$root/samples/storyboard_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" --storyboard "$S/Storyboard.app/Main.storyboardc"
+cat > "$S/Storyboard.app/Info.plist" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Storyboard</string>
+<key>CFBundleIdentifier</key><string>org.iosrt.storyboard</string><key>UIMainStoryboardFile</key><string>Main</string>
+<key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
+PL
+app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -88,6 +110,28 @@ for flavor in linux-aarch64 android-arm64; do
   # 3d. UIWebView with bundled pages: CSS subset, links via the delegate, unknown schemes, goBack
   IOSRT_HEADLESS_FRAMES=14 IOSRT_SCRIPT="3:tap:80,150;5:tap:80,196;7:tap:80,104" $R "$S/Web.app" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && diff -u "$root/tests/golden/web_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "web_demo (bundled HTML/CSS pages, link navigation, back list)"; else ko "web_demo rc=$rc" "$T/diff.txt"; fi
+  # 3e. system odds and ends: setjmp/longjmp, Mach clocks, BSD hash tables, URL file APIs
+  $R "$S/sys_demo" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/sys_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "sys_demo (setjmp/longjmp, clock services, hash tables, URL file APIs)"; else ko "sys_demo rc=$rc" "$T/diff.txt"; fi
+  # 3f. NSKeyedArchiver/Unarchiver: round trips, a foreign archive, our binary plist read back by plistlib
+  rm -f "$T/home/tmp/roundtrip.archive"
+  $R "$S/Archive.app" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/archive_demo.txt" "$T/out.txt" >"$T/diff.txt" && \
+     python3 -I -c 'import plistlib,sys; a=plistlib.load(open(sys.argv[1],"rb")); assert a["$archiver"]=="NSKeyedArchiver" and len(a["$objects"])>10' "$T/home/tmp/roundtrip.archive" 2>>"$T/diff.txt"; then
+    ok "archive_demo (keyed archives: object graphs, cycles, class fallbacks, bplist interop)"; else ko "archive_demo rc=$rc" "$T/diff.txt"; fi
+  # 3g. pre-storyboard launch: NSMainNibFile in the old keyed-archive nib format
+  IOSRT_HEADLESS_FRAMES=8 IOSRT_SCRIPT="4:tap:160,222;6:tap:160,222" $R "$S/KeyedNib.app" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/keyed_nib_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "keyed_nib_demo (NSMainNibFile, keyed-archive nib, delegate from the nib)"; else ko "keyed_nib_demo rc=$rc" "$T/diff.txt"; fi
+  # 3h. storyboards: UIMainStoryboardFile, scenes, lazily loaded views, embed and show segues
+  IOSRT_HEADLESS_FRAMES=10 IOSRT_SCRIPT="4:tap:120,222" $R "$S/Storyboard.app" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/storyboard_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "storyboard_demo (main storyboard, scenes, embed/show segues, prepareForSegue)"; else ko "storyboard_demo rc=$rc" "$T/diff.txt"; fi
+  # 3i. CoreText: lines, runs, glyphs, truncation, framesetter (drawn runs are in the frame trace)
+  IOSRT_HEADLESS_FRAMES=3 $R "$S/coretext_demo" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  grep '^ctrun ' "$T/out.txt" >>"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/coretext_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "coretext_demo (CTLine/CTRun/CTFramesetter, attributed runs)"; else ko "coretext_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

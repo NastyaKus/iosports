@@ -6,6 +6,8 @@
 extern "C" {
 #endif
 typedef double CGFloat;
+#define CGFLOAT_MAX 1.7976931348623157e+308
+#define CGFLOAT_MIN 2.2250738585072014e-308
 typedef struct CGPoint { CGFloat x, y; } CGPoint;
 typedef struct CGSize { CGFloat width, height; } CGSize;
 typedef struct CGRect { CGPoint origin; CGSize size; } CGRect;
@@ -23,6 +25,9 @@ CGRect CGRectInset(CGRect, CGFloat, CGFloat);
 void CGContextSetRGBFillColor(CGContextRef, CGFloat, CGFloat, CGFloat, CGFloat);
 void CGContextSetRGBStrokeColor(CGContextRef, CGFloat, CGFloat, CGFloat, CGFloat);
 void CGContextSetFillColorWithColor(CGContextRef, CGColorRef);
+CGFloat CGColorGetAlpha(CGColorRef);
+const CGFloat *CGColorGetComponents(CGColorRef);
+size_t CGColorGetNumberOfComponents(CGColorRef);
 void CGContextSetStrokeColorWithColor(CGContextRef, CGColorRef);
 void CGContextSetLineWidth(CGContextRef, CGFloat);
 void CGContextFillRect(CGContextRef, CGRect);
@@ -49,6 +54,11 @@ typedef const struct CGPath *CGPathRef;
 typedef struct CGPath *CGMutablePathRef;
 CGMutablePathRef CGPathCreateMutable(void);
 void CGPathMoveToPoint(CGMutablePathRef, const CGAffineTransform *, CGFloat, CGFloat);
+CGPathRef CGPathCreateWithRect(CGRect rect, const CGAffineTransform *transform);
+void CGPathRelease(CGPathRef);
+void CGContextSetTextMatrix(CGContextRef, CGAffineTransform);
+void CGContextSetTextPosition(CGContextRef, CGFloat x, CGFloat y);
+CGPoint CGContextGetTextPosition(CGContextRef);
 void CGPathAddLineToPoint(CGMutablePathRef, const CGAffineTransform *, CGFloat, CGFloat);
 void CGPathAddCurveToPoint(CGMutablePathRef, const CGAffineTransform *, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat);
 void CGPathAddArc(CGMutablePathRef, const CGAffineTransform *, CGFloat x, CGFloat y, CGFloat r, CGFloat a0, CGFloat a1, bool clockwise);

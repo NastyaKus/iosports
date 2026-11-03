@@ -28,6 +28,19 @@ python3 -I "$root/tools/mknib.py" "$out/NIB Demo.app/Main.nib"
 mkapp "Navigation Demo" NavDemo org.iosrt.sample.nav 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -framework CoreGraphics
 mkapp "Web Demo" Web org.iosrt.sample.web 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_web_bundle.py" "$out/Web Demo.app"
+mkapp "Storyboard Demo" Storyboard org.iosrt.sample.storyboard 12.0 "$root/samples/storyboard_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" --storyboard "$out/Storyboard Demo.app/Main.storyboardc"
+python3 -I - "$out/Storyboard Demo.app/Info.plist" <<'PY'
+import plistlib, sys
+p = sys.argv[1]; d = plistlib.load(open(p, "rb")); d["UIMainStoryboardFile"] = "Main"; plistlib.dump(d, open(p, "wb"))
+PY
+mkapp "Old NIB Demo" KeyedNib org.iosrt.sample.keyednib 12.0 "$root/samples/keyed_nib_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" --main-window "$out/Old NIB Demo.app/MainWindow.nib"
+python3 -I - "$out/Old NIB Demo.app/Info.plist" <<'PY'
+import plistlib, sys
+p = sys.argv[1]; d = plistlib.load(open(p, "rb")); d["NSMainNibFile"] = "MainWindow"; d.pop("UILaunchStoryboardName", None); plistlib.dump(d, open(p, "wb"))
+PY
+mkapp "CoreText Demo" CoreTextDemo org.iosrt.sample.coretext 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
 mkapp "ObjC Tour" ObjCTour org.iosrt.sample.objc 10.0 "$root/samples/objc_basics/main.m" $F
 mkapp "Hello C" HelloC org.iosrt.sample.helloc 10.0 "$root/samples/hello_c/main.c"
 mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation

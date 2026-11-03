@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 #include <dispatch/dispatch.h>
 
 typedef long NSInteger;
@@ -22,7 +23,7 @@ typedef NSUInteger NSStringEncoding;
 #define NS_OPTIONS(T, N) enum N : T N; enum N : T
 #define NS_ASSUME_NONNULL_BEGIN
 #define NS_ASSUME_NONNULL_END
-@class NSString, NSArray, NSDictionary, NSData, NSDate, NSError, NSSet, NSEnumerator, NSNotification;
+@class NSString, NSArray, NSDictionary, NSData, NSDate, NSError, NSSet, NSEnumerator, NSNotification, NSURL;
 
 @protocol NSObject
 - (BOOL)isEqual:(id)object;
@@ -112,6 +113,7 @@ __attribute__((objc_root_class))
 @property (readonly, copy) NSString *stringByDeletingPathExtension;
 - (NSString *)stringByAppendingPathComponent:(NSString *)c;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)e;
+- (instancetype)initWithData:(NSData *)d encoding:(NSStringEncoding)e;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)a encoding:(NSStringEncoding)e error:(NSError **)err;
 @end
 @interface NSMutableString : NSString
@@ -217,6 +219,7 @@ __attribute__((objc_root_class))
 + (instancetype)set;
 + (instancetype)setWithObject:(ObjectType)o;
 + (instancetype)setWithArray:(NSArray<ObjectType> *)a;
++ (instancetype)setWithObjects:(ObjectType)first, ... __attribute__((sentinel));
 @property (readonly) NSUInteger count;
 - (ObjectType)anyObject;
 - (BOOL)containsObject:(ObjectType)o;
@@ -230,6 +233,7 @@ __attribute__((objc_root_class))
 @interface NSData : NSObject <NSCopying>
 + (instancetype)data;
 + (instancetype)dataWithBytes:(const void *)b length:(NSUInteger)n;
+- (NSData *)subdataWithRange:(NSRange)r;
 + (instancetype)dataWithContentsOfFile:(NSString *)path;
 @property (readonly) const void *bytes;
 @property (readonly) NSUInteger length;
@@ -245,6 +249,7 @@ __attribute__((objc_root_class))
 + (instancetype)date;
 + (instancetype)dateWithTimeIntervalSinceNow:(NSTimeInterval)t;
 + (instancetype)dateWithTimeIntervalSince1970:(NSTimeInterval)t;
++ (instancetype)dateWithTimeIntervalSinceReferenceDate:(NSTimeInterval)t;
 + (NSTimeInterval)timeIntervalSinceReferenceDate;
 @property (readonly) NSTimeInterval timeIntervalSince1970;
 @property (readonly) NSTimeInterval timeIntervalSinceNow;
@@ -270,6 +275,9 @@ __attribute__((objc_root_class))
 @property (readonly, copy) NSString *path;
 @property (readonly, copy) NSString *lastPathComponent;
 @property (readonly, getter=isFileURL) BOOL fileURL;
+@property (readonly, copy) NSString *pathExtension;
+- (NSURL *)URLByAppendingPathComponent:(NSString *)c;
+@property (readonly, copy) NSURL *URLByDeletingLastPathComponent;
 @end
 @interface NSURLRequest : NSObject <NSCopying>
 + (instancetype)requestWithURL:(NSURL *)url;
@@ -338,6 +346,34 @@ __attribute__((objc_root_class))
 - (NSArray<NSString *> *)contentsOfDirectoryAtPath:(NSString *)p error:(NSError **)e;
 - (BOOL)createDirectoryAtPath:(NSString *)p withIntermediateDirectories:(BOOL)i attributes:(NSDictionary *)a error:(NSError **)e;
 - (BOOL)removeItemAtPath:(NSString *)p error:(NSError **)e;
+- (BOOL)copyItemAtPath:(NSString *)a toPath:(NSString *)b error:(NSError **)e;
+- (BOOL)moveItemAtPath:(NSString *)a toPath:(NSString *)b error:(NSError **)e;
+- (NSArray<NSURL *> *)URLsForDirectory:(NSUInteger)dir inDomains:(NSUInteger)mask;
+- (NSURL *)URLForDirectory:(NSUInteger)dir inDomain:(NSUInteger)domain appropriateForURL:(NSURL *)url create:(BOOL)create error:(NSError **)e;
+- (BOOL)removeItemAtURL:(NSURL *)u error:(NSError **)e;
+- (BOOL)copyItemAtURL:(NSURL *)a toURL:(NSURL *)b error:(NSError **)e;
+- (BOOL)moveItemAtURL:(NSURL *)a toURL:(NSURL *)b error:(NSError **)e;
+- (BOOL)createDirectoryAtURL:(NSURL *)u withIntermediateDirectories:(BOOL)i attributes:(NSDictionary *)a error:(NSError **)e;
+- (NSArray<NSURL *> *)contentsOfDirectoryAtURL:(NSURL *)u includingPropertiesForKeys:(NSArray *)keys options:(NSUInteger)o error:(NSError **)e;
+- (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)group;
+@end
+@interface NSString (NSURLFileIO)
++ (instancetype)stringWithContentsOfURL:(NSURL *)u encoding:(NSStringEncoding)e error:(NSError **)err;
+- (BOOL)writeToURL:(NSURL *)u atomically:(BOOL)a encoding:(NSStringEncoding)e error:(NSError **)err;
+@end
+@interface NSData (NSURLFileIO)
++ (instancetype)dataWithContentsOfURL:(NSURL *)u;
++ (instancetype)dataWithContentsOfURL:(NSURL *)u options:(NSUInteger)o error:(NSError **)e;
+- (BOOL)writeToURL:(NSURL *)u atomically:(BOOL)a;
+- (BOOL)writeToURL:(NSURL *)u options:(NSUInteger)o error:(NSError **)e;
+@end
+@interface NSDictionary (NSURLFileIO)
++ (NSDictionary *)dictionaryWithContentsOfURL:(NSURL *)u;
+- (BOOL)writeToURL:(NSURL *)u atomically:(BOOL)a;
+@end
+@interface NSArray (NSURLFileIO)
++ (NSArray *)arrayWithContentsOfURL:(NSURL *)u;
+- (BOOL)writeToURL:(NSURL *)u atomically:(BOOL)a;
 @end
 @interface NSNotification : NSObject
 @property (readonly, copy) NSString *name;
@@ -351,6 +387,68 @@ __attribute__((objc_root_class))
 - (void)postNotificationName:(NSString *)n object:(id)obj;
 - (void)postNotificationName:(NSString *)n object:(id)obj userInfo:(NSDictionary *)u;
 - (void)removeObserver:(id)o;
+@end
+@class NSCoder;
+@protocol NSCoding
+- (void)encodeWithCoder:(NSCoder *)coder;
+- (instancetype)initWithCoder:(NSCoder *)coder;
+@end
+@protocol NSSecureCoding <NSCoding>
+@property (class, readonly) BOOL supportsSecureCoding;
+@end
+@interface NSCoder : NSObject
+@property (readonly) BOOL allowsKeyedCoding;
+- (void)encodeObject:(id)o forKey:(NSString *)k;
+- (void)encodeBool:(BOOL)v forKey:(NSString *)k;
+- (void)encodeInt:(int)v forKey:(NSString *)k;
+- (void)encodeInt32:(int32_t)v forKey:(NSString *)k;
+- (void)encodeInt64:(int64_t)v forKey:(NSString *)k;
+- (void)encodeInteger:(NSInteger)v forKey:(NSString *)k;
+- (void)encodeFloat:(float)v forKey:(NSString *)k;
+- (void)encodeDouble:(double)v forKey:(NSString *)k;
+- (void)encodeBytes:(const uint8_t *)b length:(NSUInteger)n forKey:(NSString *)k;
+- (id)decodeObjectForKey:(NSString *)k;
+- (id)decodeObjectOfClass:(Class)c forKey:(NSString *)k;
+- (BOOL)decodeBoolForKey:(NSString *)k;
+- (int)decodeIntForKey:(NSString *)k;
+- (int32_t)decodeInt32ForKey:(NSString *)k;
+- (int64_t)decodeInt64ForKey:(NSString *)k;
+- (NSInteger)decodeIntegerForKey:(NSString *)k;
+- (float)decodeFloatForKey:(NSString *)k;
+- (double)decodeDoubleForKey:(NSString *)k;
+- (const uint8_t *)decodeBytesForKey:(NSString *)k returnedLength:(NSUInteger *)n;
+- (BOOL)containsValueForKey:(NSString *)k;
+@end
+typedef NS_ENUM(NSUInteger, NSPropertyListFormat) { NSPropertyListOpenStepFormat = 1, NSPropertyListXMLFormat_v1_0 = 100, NSPropertyListBinaryFormat_v1_0 = 200 };
+extern NSString *const NSKeyedArchiveRootObjectKey;
+@interface NSKeyedArchiver : NSCoder
++ (NSData *)archivedDataWithRootObject:(id)root;
++ (NSData *)archivedDataWithRootObject:(id)root requiringSecureCoding:(BOOL)secure error:(NSError **)e;
++ (BOOL)archiveRootObject:(id)root toFile:(NSString *)path;
+- (instancetype)initRequiringSecureCoding:(BOOL)secure;
+@property NSPropertyListFormat outputFormat;
+@property (readonly, strong) NSData *encodedData;
+- (void)finishEncoding;
+@end
+@interface NSKeyedUnarchiver : NSCoder
++ (id)unarchiveObjectWithData:(NSData *)data;
++ (id)unarchiveObjectWithFile:(NSString *)path;
++ (id)unarchivedObjectOfClass:(Class)c fromData:(NSData *)data error:(NSError **)e;
++ (void)setClass:(Class)c forClassName:(NSString *)name;
+- (instancetype)initForReadingWithData:(NSData *)data;
+- (void)finishDecoding;
+@end
+@interface NSAttributedString : NSObject <NSCopying, NSMutableCopying>
+- (instancetype)initWithString:(NSString *)str;
+- (instancetype)initWithString:(NSString *)str attributes:(NSDictionary<NSString *, id> *)attrs;
+@property (readonly, copy) NSString *string;
+@property (readonly) NSUInteger length;
+- (NSDictionary<NSString *, id> *)attributesAtIndex:(NSUInteger)i effectiveRange:(NSRange *)r;
+@end
+@interface NSMutableAttributedString : NSAttributedString
+- (void)addAttribute:(NSString *)name value:(id)v range:(NSRange)r;
+- (void)addAttributes:(NSDictionary<NSString *, id> *)attrs range:(NSRange)r;
+- (void)appendAttributedString:(NSAttributedString *)s;
 @end
 @interface NSIndexPath : NSObject <NSCopying>
 + (instancetype)indexPathWithIndex:(NSUInteger)index;

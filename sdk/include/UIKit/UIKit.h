@@ -191,10 +191,20 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 @interface UIPanGestureRecognizer : UIGestureRecognizer
 - (CGPoint)translationInView:(UIView *)v;
 @end
-@class UINavigationController;
+@class UINavigationController, UIStoryboard, UIStoryboardSegue, UINavigationItem;
 @interface UIViewController : UIResponder
 @property (nonatomic, strong) UIView *view;
 @property (readonly) UINavigationController *navigationController;
+@property (readonly, strong) UIStoryboard *storyboard;
+@property (readonly, strong) UINavigationItem *navigationItem;
+@property (readonly) NSArray<UIViewController *> *childViewControllers;
+@property (readonly) UIViewController *parentViewController;
+- (void)addChildViewController:(UIViewController *)child;
+- (void)didMoveToParentViewController:(UIViewController *)parent;
+- (void)performSegueWithIdentifier:(NSString *)identifier sender:(id)sender;
+- (BOOL)shouldPerformSegueWithIdentifier:(NSString *)identifier sender:(id)sender;
+- (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender;
+- (void)showViewController:(UIViewController *)vc sender:(id)sender;
 @property (nonatomic, copy) NSString *title;
 - (instancetype)initWithNibName:(NSString *)n bundle:(NSBundle *)b;
 - (void)loadView;
@@ -203,6 +213,23 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 - (void)viewDidAppear:(BOOL)a;
 - (void)presentViewController:(UIViewController *)vc animated:(BOOL)a completion:(void (^)(void))c;
 - (void)dismissViewControllerAnimated:(BOOL)a completion:(void (^)(void))c;
+@end
+@interface UINavigationItem : NSObject
+- (instancetype)initWithTitle:(NSString *)title;
+@property (nonatomic, copy) NSString *title;
+@end
+@interface UIStoryboard : NSObject
++ (UIStoryboard *)storyboardWithName:(NSString *)name bundle:(NSBundle *)bundle;
+- (__kindof UIViewController *)instantiateInitialViewController;
+- (__kindof UIViewController *)instantiateViewControllerWithIdentifier:(NSString *)identifier;
+@end
+@interface UIStoryboardSegue : NSObject
++ (instancetype)segueWithIdentifier:(NSString *)identifier source:(UIViewController *)source destination:(UIViewController *)destination performHandler:(void (^)(void))handler;
+- (instancetype)initWithIdentifier:(NSString *)identifier source:(UIViewController *)source destination:(UIViewController *)destination;
+@property (readonly) NSString *identifier;
+@property (readonly) __kindof UIViewController *sourceViewController;
+@property (readonly) __kindof UIViewController *destinationViewController;
+- (void)perform;
 @end
 @interface UINavigationController : UIViewController
 - (instancetype)initWithRootViewController:(UIViewController *)root;

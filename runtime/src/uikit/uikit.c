@@ -536,9 +536,21 @@ static void w_makeKey(id self, SEL s) {
     }
     rt_ui_mark_dirty();
 }
+/* put the root controller's view into the window (once) */
+static void w_install_root(id self) {
+    id vc = W(self)->root;
+    if (!vc) return;
+    id view = RT_SEND0(id, vc, "view");
+    if (view && V(view)->superview != self) {
+        rt_view_set_frame(view, rt_view_bounds(self));
+        V(view)->autoresizing = 2 | 16;
+        insert_subview(self, view, -1);
+    }
+}
 static void w_makeKeyAndVisible(id self, SEL s) {
     struct uiwindow *w = W(self);
     w->hiddenWin = 0; v_setHidden(self, NULL, 0);
+    w_install_root(self);
     w_makeKey(self, s);
     if (w->root && !((struct uivc *)w->root)->appeared) rt_vc_appear(w->root, 1);
 }
@@ -550,12 +562,7 @@ static void w_setRoot(id self, SEL s, id vc) {
     if (old) { id ov = ((struct uivc *)old)->view; if (ov && V(ov)->superview == self) rt_view_remove(ov); }
     w->root = objc_retain(vc);
     if (vc) {
-        id view = RT_SEND0(id, vc, "view");
-        if (view) {
-            rt_view_set_frame(view, rt_view_bounds(self));
-            V(view)->autoresizing = 2 | 16;
-            insert_subview(self, view, -1);
-        }
+        w_install_root(self);
         struct uiapp *a = (struct uiapp *)g_app;
         if (a && a->keyWindow == self) rt_vc_appear(vc, 1);
     }
@@ -1049,7 +1056,7 @@ static void deliver_touch(struct touch_ev *e) {
 /* ========================================================= app main loop */
 int rt_controls_continuous(void);
 static Class find_delegate_class(void);
-/* scripted input for headless tests: IOSRT_SCRIPT="5:tap:100,200;9:quit" (also down/move/up/drag:x,y,x2,y2) */
+/* scripted input for headless tests: IOSRT_SCRIPT="5:tap:100,200;9:quit" (also down/move/up/drag:x,y,x2,y2, wait:ms) */
 static void run_script(unsigned frame) {
     const char *s = getenv("IOSRT_SCRIPT");
     if (!s) return;
@@ -1064,6 +1071,7 @@ static void run_script(unsigned frame) {
         else if (!strcmp(cmd, "up")) iosrt_push_touch(2, x, y);
         else if (!strcmp(cmd, "drag")) { iosrt_push_touch(0, x, y); for (int i = 1; i <= 8; i++) iosrt_push_touch(1, x + (x2 - x) * i / 8, y + (y2 - y) * i / 8); iosrt_push_touch(2, x2, y2); }
         else if (!strcmp(cmd, "quit")) rt_quit_requested = 1;
+        else if (!strcmp(cmd, "wait")) usleep((useconds_t)(x * 1000));   /* N:wait:ms - real time passes (long presses, timers) */
     }
     free(dup);
 }
@@ -1143,6 +1151,7 @@ static void choose_compat_screen(void) {
     rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);
     rt_scr_w = (float)bw; rt_scr_h = (float)bh; rt_scr_scale = 2;
 }
+id g_main_nib_objects;   /* the main nib's top-level objects, kept for the app's lifetime */
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
     (void)argc; (void)argv;
     void *pool = objc_autoreleasePoolPush();
@@ -1151,17 +1160,40 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
     id app = app_shared(appc ? appc : RT_CLASS(UIApplication), NULL);
     Class dc = delegateName ? rt_class_named(rt_str_utf8(delegateName)) : find_delegate_class();
     id delegate = NULL;
+    /* UIMainStoryboardFile (device-specific key first) */
+    id info = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "infoDictionary");
+    id sbName = info ? rt_dict_get(info, rt_str("UIMainStoryboardFile~iphone")) : NULL;
+    if (!sbName && info) sbName = rt_dict_get(info, rt_str("UIMainStoryboardFile"));
     if (dc) delegate = RT_SEND0(id, RT_SEND0(id, (id)dc, "alloc"), "init");
+    else if (sbName) delegate = RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSObject), "alloc"), "init");
     else {
         /* storyboard/NIB launch: NSMainNibFile loads the window and delegate (outlets wire it up) */
         id nibName = RT_SEND1(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", id, rt_str("NSMainNibFile"));
         const char *path = nibName ? rt_nib_find(rt_str_utf8(nibName), NULL) : NULL;
-        if (path) rt_nib_instantiate(path, app, NULL);
+        /* like UIKit, keep the main nib's top-level objects (the delegate among them) for the app's lifetime */
+        if (path) g_main_nib_objects = objc_retain(rt_nib_instantiate(path, app, NULL));
         delegate = ((struct uiapp *)app)->delegate;
         if (!delegate) rt_guest_exit(75, "UIApplicationMain: no app delegate class (storyboards are not supported)");
     }
     app_setDelegate(app, NULL, delegate);
     rt_log("UIApplicationMain: delegate %s", rt_class_name(delegate->isa));
+    /* storyboard launch, like UIKit: the initial controller goes into the delegate's window
+       (created here if the delegate has none) before application:didFinishLaunching... */
+    static id sb_window;
+    if (sbName) {
+        id sb = RT_SEND2(id, (id)rt_class_named("UIStoryboard"), "storyboardWithName:bundle:", id, sbName, id, NULL);
+        id root = sb ? RT_SEND0(id, sb, "instantiateInitialViewController") : NULL;
+        if (root) {
+            id win = rt_responds(delegate, rt_sel("window")) ? RT_SEND0(id, delegate, "window") : NULL;
+            if (!win) {
+                win = objc_autorelease(RT_SEND1(id, RT_SEND0(id, (id)RT_CLASS(UIWindow), "alloc"), "initWithFrame:", CGRect, ((CGRect){ { 0, 0 }, { rt_scr_w, rt_scr_h } })));
+                if (rt_responds(delegate, rt_sel("setWindow:"))) RT_SEND1(void, delegate, "setWindow:", id, win);
+            }
+            sb_window = objc_retain(win);
+            /* like UIKit, the root's view loads when the window is made visible (after didFinishLaunching) */
+            objc_retain(root); objc_release(W(win)->root); W(win)->root = root;
+        }
+    }
     if (rt_responds(delegate, rt_sel("application:willFinishLaunchingWithOptions:")))
         RT_SEND2(long, delegate, "application:willFinishLaunchingWithOptions:", id, app, id, NULL);
     if (rt_responds(delegate, rt_sel("application:didFinishLaunchingWithOptions:")))
@@ -1171,6 +1203,7 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
     id nc = RT_SEND0(id, (id)rt_class_named("NSNotificationCenter"), "defaultCenter");
     extern id iosrt_UIApplicationDidFinishLaunchingNotification, iosrt_UIApplicationDidBecomeActiveNotification;
     RT_SEND2(void, nc, "postNotificationName:object:", id, iosrt_UIApplicationDidFinishLaunchingNotification, id, app);
+    if (sb_window && !((struct uiapp *)app)->keyWindow) RT_SEND0(void, sb_window, "makeKeyAndVisible");
     finish_launch(app);
     if (rt_responds(delegate, rt_sel("applicationDidBecomeActive:")))
         RT_SEND1(void, delegate, "applicationDidBecomeActive:", id, app);
@@ -1296,6 +1329,7 @@ void rt_uikit_init(void) {
     IM(c, "isEqual:", c_isEqual); IM(c, "hash", c_hash); IM(c, "copyWithZone:", c_copy); IM(c, "copy", c_copy);
     rt_uiimage_init();
     rt_text_init();
+    { void rt_coretext_init(void); rt_coretext_init(); }
     rt_layers_init();
 
     NEWCLASS(UIResponder, o, 0);

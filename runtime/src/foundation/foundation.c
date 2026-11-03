@@ -665,6 +665,8 @@ void rt_foundation_init(void) {
     void rt_stubs_init(void); rt_stubs_init();
     void rt_foundation_more3_init(void); rt_foundation_more3_init();
     void rt_foundation_more4_init(void); rt_foundation_more4_init();
+    void rt_urlio_init(void); rt_urlio_init();
+    void rt_archiver_init(void); rt_archiver_init();
 }
 
 /* performSelector:withObject:afterDelay: -> NSTimer machinery in misc.c */
