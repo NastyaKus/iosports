@@ -6,7 +6,7 @@ rect 0,0 375x667 rgba(31,31,46,1.00)
 text 20,60 335x40 rgba(255,255,255,1.00) size=22 align=1 "Hello from iOS code on Android"
 text 20,120 335x30 rgba(204,204,204,1.00) size=17 align=1 "taps: 2 (iOS 12.0, {{0, 0}, {375, 667}})"
 rect 107.5,180 160x50 rgba(51,128,255,1.00)
-text 107.5,180 160x50 rgba(255,255,255,1.00) size=17 align=1 "Tap me"
+text 107.5,180 160x50 rgba(255,255,255,1.00) size=15 align=1 "Tap me"
 rect 20,260 335x52 rgba(255,255,255,0.08)
 rectStroke 24,264 327x44 rgba(255,255,255,0.50) lw=2
 oval 32,272 28x28 rgba(255,102,51,1.00)

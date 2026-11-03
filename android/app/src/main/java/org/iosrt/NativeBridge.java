@@ -1,5 +1,6 @@
 package org.iosrt;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /** JNI bridge to libiosrt.so (the iOS compatibility runtime). */
@@ -8,7 +9,8 @@ public final class NativeBridge {
 
     public interface Listener {
         void onLog(int fd, String text);
-        void onFrame(float[] cmds, String[] texts);
+        /** premultiplied RGBA pixels, valid only during the call */
+        void onFrame(ByteBuffer pixels, int width, int height);
         void onExit(int code, String reason);
     }
     private static volatile Listener listener;
@@ -18,7 +20,8 @@ public final class NativeBridge {
     public static native String nativeReport(String path);
     /** Runs the guest until it exits; blocks the calling thread. */
     public static native int nativeRun(String path, String homeDir, float widthPt, float heightPt, float scale);
-    public static native void nativeTouch(int phase, float xPt, float yPt);
+    /** touch position in pixels of the last frame passed to onFrame */
+    public static native void nativeTouch(int phase, float xPx, float yPx);
     public static native void nativeQuit();
 
     // called from native code (any thread)
@@ -26,9 +29,9 @@ public final class NativeBridge {
         Listener l = listener;
         if (l != null) l.onLog(fd, new String(utf8, StandardCharsets.UTF_8));
     }
-    static void onFrame(float[] cmds, String[] texts) {
+    static void onFrame(ByteBuffer pixels, int width, int height) {
         Listener l = listener;
-        if (l != null) l.onFrame(cmds, texts);
+        if (l != null) l.onFrame(pixels, width, height);
     }
     static void onExit(int code, String reason) {
         Listener l = listener;

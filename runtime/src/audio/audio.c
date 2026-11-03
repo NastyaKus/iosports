@@ -48,6 +48,7 @@ struct audio_unit {
     pthread_t thread; int has_thread;
     void *backend;
     uint8_t *scratch; size_t scratch_size;
+    struct render_cb notify[8]; int nnotify;
 };
 static struct acdesc g_rio = { FOURCC('a', 'u', 'o', 'u'), FOURCC('r', 'i', 'o', 'c'), FOURCC('a', 'p', 'p', 'l'), 0, 0 };
 /* components handed out for other unit types: one descriptor slot per distinct request */
@@ -175,13 +176,38 @@ int32_t iosrt_AudioUnitGetParameter(struct audio_unit *u, uint32_t id, uint32_t 
 }
 int32_t iosrt_AudioUnitAddPropertyListener(struct audio_unit *u, uint32_t p, void *proc, void *ud) { (void)u; (void)p; (void)proc; (void)ud; return 0; }
 int32_t iosrt_AudioUnitRemovePropertyListenerWithUserData(struct audio_unit *u, uint32_t p, void *proc, void *ud) { (void)u; (void)p; (void)proc; (void)ud; return 0; }
-int32_t iosrt_AudioUnitAddRenderNotify(struct audio_unit *u, void *proc, void *ud) { (void)u; (void)proc; (void)ud; return 0; }
-int32_t iosrt_AudioUnitRemoveRenderNotify(struct audio_unit *u, void *proc, void *ud) { (void)u; (void)proc; (void)ud; return 0; }
+int32_t iosrt_AudioUnitAddRenderNotify(struct audio_unit *u, void *proc, void *ud) {
+    if (!valid(u) || !proc) return -50;
+    if (u->nnotify >= 8) return -10875;
+    u->notify[u->nnotify].proc = proc; u->notify[u->nnotify].refcon = ud; u->nnotify++;
+    return 0;
+}
+int32_t iosrt_AudioUnitRemoveRenderNotify(struct audio_unit *u, void *proc, void *ud) {
+    if (!valid(u)) return -50;
+    for (int i = 0; i < u->nnotify; i++) if (u->notify[i].proc == proc && u->notify[i].refcon == ud) { u->notify[i] = u->notify[--u->nnotify]; break; }
+    return 0;
+}
+/* render notifications: kAudioUnitRenderAction_PreRender (4) / PostRender (8) around a unit's render */
+static void call_notify(struct audio_unit *u, uint32_t flag, const struct audio_timestamp *ts, uint32_t frames, struct abl *io) {
+    for (int i = 0; i < u->nnotify; i++) {
+        uint32_t f = flag;
+        ((int32_t (*)(void *, uint32_t *, const struct audio_timestamp *, uint32_t, uint32_t, struct abl *))u->notify[i].proc)(u->notify[i].refcon, &f, ts, 0, frames, io);
+    }
+}
 /* Pull `frames` of a unit's output into `io` (same format the consumer asked for).
  * IO unit: its single input (callback or connected node). Mixer: sum of enabled inputs
  * (float32 samples assumed, as with the canonical/TAAE formats). Converter/other: pass-through. */
 static int32_t pull_input(struct audio_unit *u, uint32_t bus, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io);
+static int32_t unit_render_inner(struct audio_unit *u, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io);
+static void call_notify(struct audio_unit *u, uint32_t flag, const struct audio_timestamp *ts, uint32_t frames, struct abl *io);
 static int32_t unit_render(struct audio_unit *u, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io) {
+    if (!u->nnotify) return unit_render_inner(u, flags, ts, frames, io);
+    call_notify(u, 4, ts, frames, io);
+    int32_t r = unit_render_inner(u, flags, ts, frames, io);
+    call_notify(u, 8, ts, frames, io);
+    return r;
+}
+static int32_t unit_render_inner(struct audio_unit *u, uint32_t *flags, const struct audio_timestamp *ts, uint32_t frames, struct abl *io) {
     if (u->kind != UK_MIXER) return pull_input(u, 0, flags, ts, frames, io);
     for (uint32_t i = 0; i < io->n && i < 8; i++) if (io->b[i].data) memset(io->b[i].data, 0, io->b[i].bytes);
     for (uint32_t bus = 0; bus < u->nbus; bus++) {
@@ -245,7 +271,9 @@ int rt_audio_render(void *unit, uint32_t frames, float *out, uint32_t out_ch) {
     ts.flags = 3;
     uint32_t aflags = 0;
     int32_t err = 0;
+    call_notify(u, 4, &ts, frames, &list);
     err = pull_input(u, 0, &aflags, &ts, frames, &list);
+    call_notify(u, 8, &ts, frames, &list);
     u->sample_time += frames;
     int isfloat = (f->flags & kAudioFormatFlagIsFloat) != 0;
     uint32_t frac = (f->flags >> 7) & 0x3f;   /* 8.24 fixed point canonical format */
@@ -406,7 +434,7 @@ int32_t iosrt_AudioSessionInitialize(void *rl, void *mode, void *proc, void *ud)
 int32_t iosrt_AudioSessionSetActive(long a) { (void)a; return 0; }
 int32_t iosrt_AudioSessionSetProperty(uint32_t id, uint32_t sz, const void *d) { (void)id; (void)sz; (void)d; return 0; }
 int32_t iosrt_AudioSessionGetProperty(uint32_t id, uint32_t *sz, void *d) {
-    if (id == FOURCC('c', 'h', 's', 'r') && *sz >= 8) { double r = 48000; memcpy(d, &r, 8); return 0; }
+    if (id == FOURCC('c', 'h', 's', 'r') && *sz >= 8) { double r = 44100; memcpy(d, &r, 8); return 0; }
     if (d && sz) memset(d, 0, *sz);
     return 0;
 }
@@ -422,8 +450,8 @@ static rt_bool as_setActive(id self, SEL s, long a, id *err) { (void)self; (void
 static rt_bool as_setDouble(id self, SEL s, double v, id *err) { (void)self; (void)s; (void)v; if (err) *err = NULL; return 1; }
 static id as_emptyArr(id self, SEL s) { (void)self; (void)s; return objc_autorelease(rt_array_new(NULL, 0)); }
 static long as_zero_l(id self, SEL s) { (void)self; (void)s; return 0; }
-static double as_rate(id self, SEL s) { (void)self; (void)s; return 48000; }
-static double as_iobuf(id self, SEL s) { (void)self; (void)s; return 256.0 / 48000; }
+static double as_rate(id self, SEL s) { (void)self; (void)s; return 44100;   /* AAudio resamples to the device rate, so apps need no converter */ }
+static double as_iobuf(id self, SEL s) { (void)self; (void)s; return 256.0 / 44100; }
 static double as_latency(id self, SEL s) { (void)self; (void)s; return 0.01; }
 static rt_bool as_inputAvailable(id self, SEL s) { (void)self; (void)s; return 1; }
 static long as_channels(id self, SEL s) { (void)self; (void)s; return 2; }

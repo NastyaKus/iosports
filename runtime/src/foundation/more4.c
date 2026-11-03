@@ -201,8 +201,82 @@ void iosrt_vDSP_vrampmul2##S(const T *a0, const T *a1, vstr ia, T *start, const 
 VDSP_BOTH(DEF)
 #undef DEF
 
+static void o_nop(id self, SEL s) { (void)self; (void)s; }
+/* KVC collection proxies, simplified: hand out a mutable array stored under the key */
+static id o_mutableArrayForKey(id self, SEL s, id key) {
+    (void)s; id v = RT_SEND1(id, self, "valueForKey:", id, key);
+    if (v && rt_is_kind_of(v, RT_CLASS(NSMutableArray))) return v;
+    id m = v ? RT_SEND0(id, v, "mutableCopy") : RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "alloc"), "init");
+    RT_SEND2(void, self, "setValue:forKey:", id, m, id, key);
+    return objc_autorelease(m);
+}
+static id o_mutableSetForKey(id self, SEL s, id key) {
+    (void)s; Class ms = (Class)rt_class_named("NSMutableSet");
+    id v = RT_SEND1(id, self, "valueForKey:", id, key);
+    if (v && rt_is_kind_of(v, ms)) return v;
+    id m = v ? RT_SEND0(id, v, "mutableCopy") : RT_SEND0(id, (id)ms, "new");
+    RT_SEND2(void, self, "setValue:forKey:", id, m, id, key);
+    return objc_autorelease(m);
+}
+static id rq_initFull(id self, SEL s, id url, unsigned long policy, double timeout) {
+    (void)s; self = RT_SEND1(id, self, "initWithURL:", id, url);
+    if (self && rt_responds(self, rt_sel("setTimeoutInterval:"))) RT_SEND1(void, self, "setTimeoutInterval:", double, timeout);
+    (void)policy; return self;
+}
+static id rq_withFull(Class c, SEL s, id url, unsigned long policy, double timeout) { return objc_autorelease(rq_initFull(RT_SEND0(id, (id)c, "alloc"), s, url, policy, timeout)); }
+/* _NSDictionaryOfVariableBindings(@"a, b", a, b, nil): keys from the string, values from the varargs */
+id rt_NSDictionaryOfVariableBindings(id keys, id first, const uint64_t *rest) {
+    id d = RT_SEND0(id, (id)rt_class_named("NSMutableDictionary"), "dictionary");
+    id parts = RT_SEND1(id, keys, "componentsSeparatedByString:", id, rt_str(","));
+    for (size_t i = 0; i < rt_array_count(parts); i++) {
+        id k = RT_SEND1(id, rt_array_at(parts, i), "stringByTrimmingCharactersInSet:", id, RT_SEND0(id, (id)rt_class_named("NSCharacterSet"), "whitespaceCharacterSet"));
+        id v = i == 0 ? first : (id)rest[i - 1];
+        if (!v) break;
+        RT_SEND2(void, d, "setObject:forKey:", id, v, id, k);
+    }
+    return d;
+}
+/* vImage: box blur with edge extension (Accelerate) */
+struct vimage_buffer { uint8_t *data; unsigned long height, width; size_t rowBytes; };
+long iosrt_vImageBoxConvolve_ARGB8888(const struct vimage_buffer *src, const struct vimage_buffer *dst, void *tmp, unsigned long ox, unsigned long oy,
+                                       uint32_t kh, uint32_t kw, const uint8_t *bg, uint32_t flags) {
+    (void)tmp; (void)bg;
+    if (flags & 128) return 0;                     /* kvImageGetTempBufferSize: none needed */
+    if (!src || !dst || !(kh & 1) || !(kw & 1)) return -21767;   /* kvImageInvalidKernelSize */
+    unsigned long w = dst->width, h = dst->height;
+    uint32_t *mid = malloc(w * h * 4 * sizeof(uint32_t));
+    int rx = (int)kw / 2, ry = (int)kh / 2;
+    for (unsigned long y = 0; y < h; y++)
+        for (unsigned long x = 0; x < w; x++)
+            for (int c = 0; c < 4; c++) {
+                uint32_t sum = 0;
+                for (int k = -rx; k <= rx; k++) {
+                    long sx = (long)(x + ox) + k; if (sx < 0) sx = 0; if (sx >= (long)src->width) sx = (long)src->width - 1;
+                    long sy = (long)(y + oy); if (sy >= (long)src->height) sy = (long)src->height - 1;
+                    sum += src->data[(size_t)sy * src->rowBytes + (size_t)sx * 4 + c];
+                }
+                mid[(y * w + x) * 4 + c] = sum;
+            }
+    for (unsigned long y = 0; y < h; y++)
+        for (unsigned long x = 0; x < w; x++)
+            for (int c = 0; c < 4; c++) {
+                uint32_t sum = 0;
+                for (int k = -ry; k <= ry; k++) { long sy = (long)y + k; if (sy < 0) sy = 0; if (sy >= (long)h) sy = (long)h - 1; sum += mid[((size_t)sy * w + x) * 4 + c]; }
+                dst->data[y * dst->rowBytes + x * 4 + c] = (uint8_t)(sum / (kw * kh));
+            }
+    free(mid);
+    return 0;
+}
+static id d_initWithDictCopy(id self, SEL s, id other, long copy) { (void)s; (void)copy; return RT_SEND1(id, self, "initWithDictionary:", id, other); }
+struct rt_method *rt_find_method(Class cls, SEL sel);
 void rt_foundation_more4_init(void) {
     IM(RT_CLASS(NSArray), "makeObjectsPerformSelector:withObject:", a_performWith);
+    IM(RT_CLASS(NSDictionary), "initWithDictionary:copyItems:", d_initWithDictCopy);
+    IM(RT_CLASS(NSObject), "awakeFromNib", o_nop); IM(RT_CLASS(NSObject), "prepareForInterfaceBuilder", o_nop);
+    IM(RT_CLASS(NSObject), "mutableArrayValueForKey:", o_mutableArrayForKey); IM(RT_CLASS(NSObject), "mutableSetValueForKey:", o_mutableSetForKey);
+    Class rq = (Class)rt_class_named("NSURLRequest");
+    if (rq && !rt_find_method(rq, rt_sel("initWithURL:cachePolicy:timeoutInterval:"))) IM(rq, "initWithURL:cachePolicy:timeoutInterval:", rq_initFull);
+    if (rq && !rt_find_method(rq->isa, rt_sel("requestWithURL:cachePolicy:timeoutInterval:"))) CM(rq, "requestWithURL:cachePolicy:timeoutInterval:", rq_withFull);
     IM(RT_CLASS(NSBundle), "pathsForResourcesOfType:inDirectory:", b_pathsOfType);
     Class d = RT_CLASS(NSDictionary);
     IM(d, "fileSize", d_fileSize); IM(d, "fileModificationDate", d_fileModificationDate);

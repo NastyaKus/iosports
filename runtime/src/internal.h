@@ -67,11 +67,10 @@ void rt_sb_printf(rt_sb *sb, const char *fmt, ...) __attribute__((format(printf,
 char *rt_sb_take(rt_sb *sb);  /* NUL terminated, caller frees */
 
 /* ------------------------------------------------------------- platform */
-struct rt_display_list;
 struct rt_platform {
     const char *name;
     void (*write_out)(int fd, const char *buf, size_t len);
-    void (*present)(const struct rt_display_list *dl);         /* may be NULL */
+    void (*present_frame)(const uint32_t *px, int w, int h, int stride);   /* RGBA premultiplied; may be NULL */
     int  (*audio_start)(void *unit);                             /* may be NULL */
     void (*audio_stop)(void *unit);
     void (*on_exit)(int code, const char *reason);
@@ -280,22 +279,7 @@ int  rt_main_queue_pending(void);
 
 /* ---------------------------------------------------------------- uikit */
 void rt_uikit_init(void);
-struct rt_dl_cmd {
-    int op;                     /* 1 rect fill, 2 text, 3 ellipse fill, 4 ellipse stroke, 5 line, 6 rect stroke */
-    float x, y, w, h;
-    float r, g, b, a;
-    float size, line;
-    int align;
-    char *text;
-};
-struct rt_display_list {
-    struct rt_dl_cmd *cmds; size_t n, cap;
-    float width, height;
-    unsigned frame;
-};
-void rt_dl_clear(struct rt_display_list *dl);
-struct rt_dl_cmd *rt_dl_push(struct rt_display_list *dl, int op);
-void rt_dl_dump(const struct rt_display_list *dl, rt_sb *out);
+
 /* platform -> runtime input */
 RT_EXPORT void iosrt_push_touch(int phase, float x, float y);
 RT_EXPORT void iosrt_set_screen(float w, float h, float scale);

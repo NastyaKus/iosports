@@ -17,10 +17,14 @@ mkapp() { # name exe-name plist-id builder-args...
 <key>CFBundleExecutable</key><string>$exe</string>
 <key>CFBundleIdentifier</key><string>$ident</string>
 <key>CFBundleDisplayName</key><string>$name</string>
+<key>UILaunchStoryboardName</key><string>LaunchScreen</string>
 </dict></plist>
 PL
 }
 mkapp "Counter (UIKit)" Counter org.iosrt.sample.counter 12.0 "$root/samples/uikit_hello/main.m" $F -framework UIKit -framework CoreGraphics
+mkapp "Graphics Demo" GraphicsDemo org.iosrt.sample.graphics 12.0 "$root/samples/graphics_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore
+mkapp "NIB Demo" NibDemo org.iosrt.sample.nib 12.0 "$root/samples/nib_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" "$out/NIB Demo.app/Main.nib"
 mkapp "ObjC Tour" ObjCTour org.iosrt.sample.objc 10.0 "$root/samples/objc_basics/main.m" $F
 mkapp "Hello C" HelloC org.iosrt.sample.helloc 10.0 "$root/samples/hello_c/main.c"
 mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation

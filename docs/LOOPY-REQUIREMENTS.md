@@ -68,3 +68,27 @@ it is blocked by framework breadth, not by a fundamental technical barrier:
 every remaining item is "more HLE implementation", plus one hard engineering
 piece (exception unwinding). For an app the size of Loopy HD this is a
 multi-person-month effort.
+
+## Stage 2 result (aggregate, measured locally)
+
+After stage 2, **983 of 1,212 imported symbols (81.1 %)** are provided by iosrt
+(stage 1: 30.8 %). Run headless under qemu with lenient handling of the rest,
+the app:
+
+* runs all 36 static initialisers and its third-party SDKs' start-up
+  (analytics, backend client, crash reporter, audio engine, inter-app audio,
+  MIDI) without crashing;
+* loads its main view controller from its compiled NIB, decodes its PNG
+  resources and lays the screen out for the 320×568 compatibility screen it
+  supports;
+* receives a scripted tap on a track through its own gesture recognisers, and
+  its audio engine starts and stops a recording on the render thread.
+
+What the trace showed was needed beyond "more API", all implemented as generic
+runtime features: per-object `@synchronized` (striped locks deadlocked a
+task library), per-thread run loops with `performSelector:onThread:`, real
+serial dispatch queues and `dispatch_get_specific`, render notifications on
+audio units, the NIB loader's handling of archived autoresizing and interaction
+flags, and iOS's compatibility ("zoomed") screen for apps without a launch
+storyboard. Remaining gaps for this app: microphone input, audio file
+conversion, C++ exception unwinding and networking.

@@ -532,10 +532,10 @@ static id er_desc(id self, SEL s) {
 }
 
 /* ===================================================================== NSValue */
-struct nsvalue { Class isa; char type[32]; uint8_t bytes[48]; };
+struct nsvalue { Class isa; char type[64]; uint8_t bytes[128]; };
 static id val_make(const void *b, size_t n, const char *type) {
     id o = rt_alloc_instance(RT_CLASS(NSValue), 0); struct nsvalue *v = (struct nsvalue *)o;
-    snprintf(v->type, sizeof v->type, "%s", type); memcpy(v->bytes, b, n > 48 ? 48 : n); return objc_autorelease(o);
+    snprintf(v->type, sizeof v->type, "%s", type); memcpy(v->bytes, b, n > 128 ? 128 : n); return objc_autorelease(o);
 }
 static id v_withRect(Class c, SEL s, CGRect r) { (void)c; (void)s; return val_make(&r, sizeof r, "{CGRect={CGPoint=dd}{CGSize=dd}}"); }
 static id v_withPoint(Class c, SEL s, CGPoint p) { (void)c; (void)s; return val_make(&p, sizeof p, "{CGPoint=dd}"); }
@@ -550,9 +550,9 @@ static CGPoint v_point(id self, SEL s) { (void)s; CGPoint r; memcpy(&r, ((struct
 static CGSize v_size(id self, SEL s) { (void)s; CGSize r; memcpy(&r, ((struct nsvalue *)self)->bytes, sizeof r); return r; }
 static NSRange v_range(id self, SEL s) { (void)s; NSRange r; memcpy(&r, ((struct nsvalue *)self)->bytes, sizeof r); return r; }
 static void *v_pointer(id self, SEL s) { (void)s; void *p; memcpy(&p, ((struct nsvalue *)self)->bytes, sizeof p); return p; }
-static void v_getValue(id self, SEL s, void *out) { (void)s; struct nsvalue *v = (struct nsvalue *)self; struct tinfo t; parse_type(v->type, &t); memcpy(out, v->bytes, t.size > 48 ? 48 : t.size); }
+static void v_getValue(id self, SEL s, void *out) { (void)s; struct nsvalue *v = (struct nsvalue *)self; struct tinfo t; parse_type(v->type, &t); memcpy(out, v->bytes, t.size > 128 ? 128 : t.size); }
 static const char *v_objCType(id self, SEL s) { (void)s; return ((struct nsvalue *)self)->type; }
-static rt_bool v_isEqual(id self, SEL s, id o) { (void)s; return o && o->isa == self->isa && !memcmp(((struct nsvalue *)self)->bytes, ((struct nsvalue *)o)->bytes, 48); }
+static rt_bool v_isEqual(id self, SEL s, id o) { (void)s; return o && o->isa == self->isa && !memcmp(((struct nsvalue *)self)->bytes, ((struct nsvalue *)o)->bytes, 128); }
 static id v_copy(id self, SEL s, void *z) { (void)s; (void)z; return objc_retain(self); }
 
 /* ======================================================================= locks */

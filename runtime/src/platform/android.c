@@ -1,7 +1,7 @@
 /*
  * Android platform layer + JNI bridge for iosrt.
  *   - guest stdout/stderr/NSLog -> logcat + org.iosrt.NativeBridge.onLog
- *   - UIKit display list        -> NativeBridge.onFrame (drawn by IosView)
+ *   - rendered UIKit frames     -> NativeBridge.onFrame (RGBA bitmap, drawn by IosView)
  *   - RemoteIO output           -> AAudio low-latency stream
  *   - libc++ imports (std::__1) -> remapped to the NDK's std::__ndk1 in libc++_shared.so
  */
@@ -40,30 +40,21 @@ static void a_write(int fd, const char *buf, size_t len) {
     (*env)->DeleteLocalRef(env, arr);
 }
 
-static void a_present(const struct rt_display_list *dl) {
+static void a_present(const uint32_t *px, int w, int h, int stride) {
     JNIEnv *env = env_for_thread();
     if (!env) return;
-    const int stride = 12;
-    jfloatArray f = (*env)->NewFloatArray(env, (jsize)(dl->n * stride + 2));
-    jobjectArray texts = (*env)->NewObjectArray(env, (jsize)dl->n, (*env)->FindClass(env, "java/lang/String"), NULL);
-    float *v = malloc(sizeof(float) * (dl->n * stride + 2));
-    v[0] = dl->width; v[1] = dl->height;
-    for (size_t i = 0; i < dl->n; i++) {
-        const struct rt_dl_cmd *c = &dl->cmds[i];
-        float *o = v + 2 + i * stride;
-        o[0] = (float)c->op; o[1] = c->x; o[2] = c->y; o[3] = c->w; o[4] = c->h;
-        o[5] = c->r; o[6] = c->g; o[7] = c->b; o[8] = c->a; o[9] = c->size; o[10] = (float)c->align; o[11] = c->line;
-        if (c->text) {
-            jstring s = (*env)->NewStringUTF(env, c->text);
-            (*env)->SetObjectArrayElement(env, texts, (jsize)i, s);
-            (*env)->DeleteLocalRef(env, s);
-        }
+    /* rows are contiguous in the screen surface; the Java side copies synchronously */
+    const void *data = px;
+    void *tmp = NULL;
+    if (stride != w) {
+        tmp = malloc((size_t)w * h * 4);
+        for (int y = 0; y < h; y++) memcpy((uint32_t *)tmp + (size_t)y * w, px + (size_t)y * stride, (size_t)w * 4);
+        data = tmp;
     }
-    (*env)->SetFloatArrayRegion(env, f, 0, (jsize)(dl->n * stride + 2), v);
-    free(v);
-    (*env)->CallStaticVoidMethod(env, g_bridge, m_onFrame, f, texts);
-    (*env)->DeleteLocalRef(env, f);
-    (*env)->DeleteLocalRef(env, texts);
+    jobject buf = (*env)->NewDirectByteBuffer(env, (void *)data, (jlong)w * h * 4);
+    (*env)->CallStaticVoidMethod(env, g_bridge, m_onFrame, buf, (jint)w, (jint)h);
+    (*env)->DeleteLocalRef(env, buf);
+    free(tmp);
 }
 
 /* ---------------------------------------------------------------- AAudio */
@@ -137,7 +128,7 @@ RT_EXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     jclass c = (*env)->FindClass(env, "org/iosrt/NativeBridge");
     g_bridge = (*env)->NewGlobalRef(env, c);
     m_onLog = (*env)->GetStaticMethodID(env, c, "onLog", "(I[B)V");
-    m_onFrame = (*env)->GetStaticMethodID(env, c, "onFrame", "([F[Ljava/lang/String;)V");
+    m_onFrame = (*env)->GetStaticMethodID(env, c, "onFrame", "(Ljava/nio/ByteBuffer;II)V");
     m_onExit = (*env)->GetStaticMethodID(env, c, "onExit", "(ILjava/lang/String;)V");
     pthread_key_create(&detach_key, detach_thread);
     rt_plat = &android_platform;
@@ -174,6 +165,6 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
 }
 
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeTouch(JNIEnv *env, jclass cls, jint phase, jfloat x, jfloat y) {
-    (void)env; (void)cls; iosrt_push_touch(phase, x, y);
+    (void)env; (void)cls; void iosrt_push_touch_px(int, int, float, float); iosrt_push_touch_px(0, phase, x, y);
 }
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeQuit(JNIEnv *env, jclass cls) { (void)env; (void)cls; iosrt_request_quit(); }

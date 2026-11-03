@@ -15,12 +15,16 @@ rm -rf "$W"; mkdir -p "$W/gen" "$W/lib/arm64-v8a" "$W/classes" "$W/dex" "$W/asse
 
 echo "== native: libiosrt.so"
 python3 -I "$root/tools/gen_decls.py" "$root/runtime/src/exports" "$W/gen/decls.h"
-SRCS=$(find "$root/runtime/src" -name '*.c' | sort)
+SRCS=$(find "$root/runtime/src" -name '*.c' -not -path '*/cxx/*' | sort)
+CXXINC="-nostdinc++ -isystem $root/runtime/src/cxx/include -isystem $TC/sysroot/usr/include/c++/v1"
+# Apple-ABI C++ support (std::__1 with the alternate string layout), linked with a static libc++abi
+"$TC/bin/clang++" --target=aarch64-linux-android29 -fPIC -std=c++17 -O2 -g -fno-exceptions $CXXINC \
+    -c "$root/runtime/src/cxx/cxx_string.cpp" -o "$W/cxx_string.o"
 "$TC/bin/clang" --target=aarch64-linux-android29 -shared -fPIC -std=gnu11 -O2 -g -fsigned-char \
     -Wall -Wno-unused-parameter -Wno-missing-field-initializers -I"$W/gen" -I"$root/runtime/src/exports" \
-    $SRCS "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
-    -Wl,-z,max-page-size=16384 -llog -laaudio -ldl -lm
-cp "$TC/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$W/lib/arm64-v8a/"
+    -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB \
+    $SRCS "$root/runtime/src/cxx/cxx_abi.c" "$W/cxx_string.o" "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
+    -Wl,-z,max-page-size=16384 -static-libstdc++ -lc++_static -lc++abi -llog -laaudio -lz -ldl -lm
 "$TC/bin/llvm-strip" --strip-debug "$W/lib/arm64-v8a/libiosrt.so"
 
 echo "== demo apps"
@@ -31,7 +35,7 @@ javac -source 17 -target 17 -nowarn -classpath "$JAR" -d "$W/classes" $(find "$r
 "$BT/d8" --min-api 29 --lib "$JAR" --output "$W/dex" $(find "$W/classes" -name '*.class')
 
 echo "== package"
-sed 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android" package="org.iosrt" android:versionCode="1" android:versionName="0.1-stage1">/' \
+sed 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android" package="org.iosrt" android:versionCode="2" android:versionName="0.2-stage2">/' \
     "$root/android/app/src/main/AndroidManifest.xml" > "$W/AndroidManifest.xml"
 "$BT/aapt2" link -I "$JAR" --manifest "$W/AndroidManifest.xml" -A "$W/assets" \
     --min-sdk-version 29 --target-sdk-version 35 -o "$W/base.apk"
