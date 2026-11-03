@@ -1,0 +1,51 @@
+== classes & messaging
+<Dog Rex legs=4>
+Rex says woof to Kirill!
+Generic says ... to you / WOOF
+isKindOfClass Animal: 1, isMemberOfClass Animal: 0
+respondsTo shout: 1, optionalThing: 0
+conformsTo Greeter: 1
+superclass chain: Dog -> Animal -> NSObject
++load ran 1 time(s), +initialize 1 time(s)
+== weak refs & dealloc
+friend before: Tmp
+friend after release: (null), deallocs=1
+== strings
+len=18 upper=HELLO, IOS RUNTIME reversed=emitnur SOi ,olleH
+hasPrefix=1 contains=1 range=11
+split=(
+    a,
+    b,
+    c
+) joined=a-b-c
+unicode: Привет, мир (11 units)
+format: 42 2.50 obj cstr 00007
+intValue=123 doubleValue=4.5
+== literals & collections
+array=(
+    3,
+    1,
+    2,
+    40,
+    1
+)
+dict count=3 two=zwei list[1]=y
+filtered+sorted=1,1,2,3
+block enumeration sum of first 3 = 6
+mutable dict keys=list three two
+== blocks
+adder(5)=105 counter=3
+captured block from array: 4
+== runtime API
+method names: sound shout
+forwarded: woof
+associated object: associated!
+== misc Foundation
+NSNumber 3.14159 int=3 bool=0
+data=<686921> length=3
+process arguments=1 main thread=1
+defaults launches=5
+main-queue block ran
+timer fired 3 times
+notification Ping userInfo=v
+done, deallocs=3

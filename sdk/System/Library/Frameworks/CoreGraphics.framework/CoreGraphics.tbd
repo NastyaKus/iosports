@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_CGAffineTransformIdentity', '_CGContextAddLineToPoint', '_CGContextBeginPath', '_CGContextFillEllipseInRect', '_CGContextFillRect', '_CGContextMoveToPoint', '_CGContextRestoreGState', '_CGContextSaveGState', '_CGContextSetFillColorWithColor', '_CGContextSetLineWidth', '_CGContextSetRGBFillColor', '_CGContextSetRGBStrokeColor', '_CGContextSetStrokeColorWithColor', '_CGContextStrokeEllipseInRect', '_CGContextStrokePath', '_CGContextStrokeRect', '_CGPointEqualToPoint', '_CGPointZero', '_CGRectContainsPoint', '_CGRectContainsRect', '_CGRectEqualToRect', '_CGRectGetHeight', '_CGRectGetMaxX', '_CGRectGetMaxY', '_CGRectGetMidX', '_CGRectGetMidY', '_CGRectGetMinX', '_CGRectGetMinY', '_CGRectGetWidth', '_CGRectInfinite', '_CGRectInset', '_CGRectIntegral', '_CGRectIntersection', '_CGRectIntersectsRect', '_CGRectIsEmpty', '_CGRectIsNull', '_CGRectNull', '_CGRectOffset', '_CGRectUnion', '_CGRectZero', '_CGSizeEqualToSize', '_CGSizeZero' ]
+...

@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/Foundation.framework/Foundation'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_NSClassFromString', '_NSDefaultRunLoopMode', '_NSFoundationVersionNumber', '_NSGenericException', '_NSHomeDirectory', '_NSInternalInconsistencyException', '_NSInvalidArgumentException', '_NSLog', '_NSLogv', '_NSRangeException', '_NSRunLoopCommonModes', '_NSSearchPathForDirectoriesInDomains', '_NSSelectorFromString', '_NSStringFromClass', '_NSStringFromProtocol', '_NSStringFromRange', '_NSStringFromSelector', '_NSTemporaryDirectory' ]
+    objc-classes: [ NSArray, NSAutoreleasePool, NSBundle, NSCharacterSet, NSData, NSDate, NSDictionary, NSEnumerator, NSException, NSFileManager, NSMutableArray, NSMutableData, NSMutableDictionary, NSMutableSet, NSMutableString, NSNotification, NSNotificationCenter, NSNull, NSNumber, NSProcessInfo, NSRunLoop, NSSet, NSString, NSThread, NSTimer, NSUserDefaults ]
+...

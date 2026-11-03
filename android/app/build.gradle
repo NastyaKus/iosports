@@ -1,0 +1,39 @@
+plugins { id "com.android.application" }
+
+def repoRoot = rootProject.projectDir.parentFile
+def samplesOut = new File(buildDir, "generated/iosSamples")
+
+android {
+    namespace "org.iosrt"
+    compileSdk 35
+    ndkVersion "27.2.12479018"
+    defaultConfig {
+        applicationId "org.iosrt.shell"
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName "0.1-stage1"
+        ndk { abiFilters "arm64-v8a" }
+        externalNativeBuild {
+            cmake { arguments "-DANDROID_STL=c++_shared", "-DIOSRT_ROOT=${repoRoot}" }
+        }
+    }
+    externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } }
+    sourceSets { main { assets.srcDirs += [samplesOut] } }
+    buildTypes {
+        release { minifyEnabled false; signingConfig signingConfigs.debug }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packagingOptions { jniLibs { useLegacyPackaging true } }
+}
+
+/* The demo iOS apps are built from source (samples/) with the iosrt mini-SDK
+ * and bundled as assets. Requires clang + ld64.lld on the build machine. */
+tasks.register("buildIosSamples", Exec) {
+    inputs.dir(new File(repoRoot, "samples"))
+    inputs.dir(new File(repoRoot, "sdk/include"))
+    inputs.dir(new File(repoRoot, "runtime/src/exports"))
+    outputs.dir(samplesOut)
+    commandLine "sh", new File(repoRoot, "tools/build_samples.sh").path, new File(samplesOut, "samples").path
+}
+preBuild.dependsOn("buildIosSamples")

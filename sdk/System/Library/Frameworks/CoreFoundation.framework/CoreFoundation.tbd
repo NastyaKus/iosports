@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_CFAbsoluteTimeGetCurrent', '_CFArrayGetCount', '_CFArrayGetValueAtIndex', '_CFAutorelease', '_CFBundleGetMainBundle', '_CFCopyDescription', '_CFDictionaryGetValue', '_CFEqual', '_CFGetRetainCount', '_CFHash', '_CFRelease', '_CFRetain', '_CFRunLoopGetCurrent', '_CFRunLoopGetMain', '_CFRunLoopRun', '_CFRunLoopRunInMode', '_CFRunLoopStop', '_CFShow', '_CFStringCreateWithCString', '_CFStringCreateWithFormat', '_CFStringCreateWithFormatAndArguments', '_CFStringGetCString', '_CFStringGetCStringPtr', '_CFStringGetLength', '___CFConstantStringClassReference', '_kCFAllocatorDefault', '_kCFAllocatorNull', '_kCFCoreFoundationVersionNumber', '_kCFRunLoopCommonModes', '_kCFRunLoopDefaultMode' ]
+    objc-classes: [ __NSCFConstantString ]
+...
