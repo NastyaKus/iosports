@@ -32,6 +32,7 @@ static NSString *R(CGRect r) { return NSStringFromCGRect(r); }
     content.frame = CGRectInset(self.view.bounds, 20, 20);
 }
 - (void)pushViewController:(UIViewController *)vc animated:(BOOL)animated {
+    NSLog(@"shell push %@ (override sees every push, the root too)", NSStringFromClass([vc class]));
     [super pushViewController:vc animated:NO];
     [self layoutContent];
 }
@@ -96,7 +97,14 @@ static NSString *R(CGRect r) { return NSStringFromCGRect(r); }
 }
 @end
 
+@interface ChildPanel : UIViewController
+@end
+@implementation ChildPanel
+- (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; NSLog(@"child panel viewWillAppear (added while its parent is on screen)"); }
+@end
+
 @interface MenuController : UIViewController
+@property (nonatomic) BOOL addedChild;
 @end
 @implementation MenuController
 - (void)viewDidLoad {
@@ -109,6 +117,14 @@ static NSString *R(CGRect r) { return NSStringFromCGRect(r); }
 }
 - (void)viewDidAppear:(BOOL)a {
     [super viewDidAppear:a];
+    if (!self.addedChild) {
+        self.addedChild = YES;
+        ChildPanel *child = [ChildPanel new];
+        [self addChildViewController:child];
+        child.view.frame = CGRectMake(0, 300, 100, 50);
+        [self.view addSubview:child.view];
+        [child didMoveToParentViewController:self];
+    }
     UIView *content = self.view.superview;
     NSLog(@"menu appeared, view %@ in %@ (%@ inside %@)", R(self.view.frame), R(content.frame),
           content.superview == self.navigationController.view ? @"original container" : @"something else",

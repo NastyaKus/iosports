@@ -246,6 +246,7 @@ static id ctl_initWithFrame(id self, SEL s, CGRect fr) {
 static void ctl_dealloc(id self, SEL s) { objc_release(CT(self)->targets); struct { id r; Class c; } sup = { self, RT_CLASS(UIControl) }; ((void (*)(void *, SEL))objc_msgSendSuper2)(&sup, s); }
 static void ctl_addTarget(id self, SEL s, id target, SEL action, unsigned long events) {
     (void)s; struct uicontrol *c = CT(self);
+    rt_log("addTarget %p %s action %s events 0x%lx on %s %p", (void *)target, target ? rt_class_name(target->isa) : "nil", action ? (const char *)action : "-", events, rt_class_name(self->isa), (void *)self);
     if (!c->targets) c->targets = mkarray();
     for (size_t i = 0; i < rt_array_count(c->targets); i++) {
         struct target_action *t = (struct target_action *)rt_array_at(c->targets, i);
@@ -257,6 +258,7 @@ static void ctl_addTarget(id self, SEL s, id target, SEL action, unsigned long e
 }
 static void ctl_removeTarget(id self, SEL s, id target, SEL action, unsigned long events) {
     (void)s; id arr = CT(self)->targets;
+    rt_log("removeTarget %p action %s events 0x%lx on %s %p (%zu targets)", (void *)target, action ? (const char *)action : "-", events, rt_class_name(self->isa), (void *)self, arr ? rt_array_count(arr) : (size_t)0);
     for (size_t i = arr ? rt_array_count(arr) : 0; i-- > 0;) {
         struct target_action *t = (struct target_action *)rt_array_at(arr, i);
         if ((!target || t->target == target) && (!action || t->action == action)) { t->events &= ~events; if (!t->events) RT_SEND1(void, arr, "removeObjectAtIndex:", unsigned long, (unsigned long)i); }

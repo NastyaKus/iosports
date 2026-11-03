@@ -556,6 +556,7 @@ static void nav_loadView(id self, SEL s) {
 }
 static void nav_push(id self, SEL s, id vc, long animated) {
     (void)s; (void)animated; struct uinav *n = NAV(self); nav_ensure(self);
+    rt_log("UINavigationController push %s onto %s (%zu in stack, view %s)", vc ? rt_class_name(vc->isa) : "nil", rt_class_name(self->isa), n->stack ? rt_array_count(n->stack) : (size_t)0, VC(self)->view ? "loaded" : "not loaded");
     if (!vc) return;
     id old = nav_top(self, NULL);
     id d = n->delegate;
@@ -593,7 +594,14 @@ static id nav_popTo(id self, SEL s, id vc, long a) {
     while (NAV(self)->stack && rt_array_count(NAV(self)->stack) > 1 && nav_top(self, NULL) != vc) { id p = nav_pop(self, s, a); if (p) RT_SEND1(void, popped, "addObject:", id, p); }
     return objc_autorelease(popped);
 }
-static id nav_initWithRoot(id self, SEL s, id root) { self = nav_init(self, s); if (root) nav_push(self, NULL, root, 0); return self; }
+/* like UIKit, the root goes in through pushViewController:animated:, so subclasses that
+   override it (custom navigation chrome) see their first controller too */
+static id nav_initWithRoot(id self, SEL s, id root) {
+    self = RT_SEND2(id, self, "initWithNibName:bundle:", id, NULL, id, NULL);
+    (void)s; nav_ensure(self);
+    if (root) RT_SEND2(void, self, "pushViewController:animated:", id, root, long, 0);
+    return self;
+}
 static id nav_initWithCoder(id self, SEL s, id coder) {
     self = vc_initWithCoder(self, s, coder);
     nav_ensure(self);
