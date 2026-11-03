@@ -296,7 +296,7 @@ static id js_parse(Class c, SEL s, id data, unsigned long opts, id *err) {
     size_t n; const char *b = rt_data_bytes(data, &n);
     struct jp j = { b, b + n, 0 };
     id r = jvalue(&j, (opts & 1) != 0, 0);
-    if (j.err) { if (err) *err = RT_SEND2(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSCocoaErrorDomain"), long, 3840) ; return NULL; }
+    if (j.err) { if (err) *err = RT_SEND3(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSCocoaErrorDomain"), long, 3840, id, NULL) ; return NULL; }
     return r;
 }
 static void jwrite(rt_sb *sb, id o, int pretty, int depth);
@@ -590,10 +590,13 @@ static id str_initWithData(id self, SEL s, id data, unsigned long enc) {
 }
 static id str_initWithContentsOfFile(id self, SEL s, id path, unsigned long enc, id *err) {
     (void)s; objc_release(self);
-    id r = RT_SEND2(id, (id)RT_CLASS(NSString), "stringWithContentsOfFile:encoding:error:", id, path, unsigned long, enc);
-    if (err) *err = NULL; return objc_retain(r);
+    id r = ((id (*)(id, SEL, id, unsigned long, id *))objc_msgSend)((id)RT_CLASS(NSString), rt_sel("stringWithContentsOfFile:encoding:error:"), path, enc, err);
+    return objc_retain(r);
 }
-static id str_stringWithContentsOfFileUsed(Class c, SEL s, id path, unsigned long *enc, id *err) { (void)s; if (enc) *enc = 4; return RT_SEND2(id, (id)c, "stringWithContentsOfFile:encoding:error:", id, path, id *, err); }
+static id str_stringWithContentsOfFileUsed(Class c, SEL s, id path, unsigned long *enc, id *err) {
+    (void)s; if (enc) *enc = 4;
+    return ((id (*)(id, SEL, id, unsigned long, id *))objc_msgSend)((id)c, rt_sel("stringWithContentsOfFile:encoding:error:"), path, 4, err);
+}
 static id date_copy(id self, SEL s, void *z) { return self_copy(self, s, z); }
 static id date_earlier(id self, SEL s, id o) { (void)s; return date_ref(self) <= date_ref(o) ? self : o; }
 static id date_later(id self, SEL s, id o) { (void)s; return date_ref(self) >= date_ref(o) ? self : o; }
@@ -644,6 +647,16 @@ static void rq_setBody(id self, SEL s, id b) { (void)s; struct nsurlreq *r = (st
 static id rq_body(id self, SEL s) { (void)s; return ((struct nsurlreq *)self)->body; }
 static void rq_setHeader(id self, SEL s, id v, id k) { (void)s; struct nsurlreq *r = (struct nsurlreq *)self; if (k && v) rt_dict_set(r->headers, k, v); }
 static id rq_headers(id self, SEL s) { (void)s; return ((struct nsurlreq *)self)->headers; }
+static void rq_setAllHeaders(id self, SEL s, id d) { (void)s; struct nsurlreq *r = (struct nsurlreq *)self; id m = d ? RT_SEND0(id, d, "mutableCopy") : rt_dict_new(NULL, NULL, 0); objc_release(r->headers); r->headers = m; }
+static id dict_initObjsKeys(id self, SEL s, id vals, id keys) {
+    (void)s; Class c = self->isa; rt_dealloc_instance(self);
+    size_t n = rt_array_count(vals) < rt_array_count(keys) ? rt_array_count(vals) : rt_array_count(keys);
+    id *v = rt_xmalloc((n + 1) * sizeof(id)), *k = rt_xmalloc((n + 1) * sizeof(id));
+    for (size_t i = 0; i < n; i++) { v[i] = rt_array_at(vals, i); k[i] = rt_array_at(keys, i); }
+    id d = rt_dict_new(v, k, n); free(v); free(k);
+    if (c == RT_CLASS(NSDictionary)) { id r = RT_SEND0(id, d, "copy"); objc_release(d); d = r; }
+    return d;
+}
 static void rq_setTimeout(id self, SEL s, double t) { (void)s; ((struct nsurlreq *)self)->timeout = t; }
 static id g_session, g_cookies, g_urlcache;
 static id ses_shared(Class c, SEL s) { (void)s; return singleton(c, &g_session); }
@@ -652,7 +665,7 @@ static id ses_withConfigDelegate(Class c, SEL s, id cfg, id del, id q) { (void)c
 /* Networking is not implemented: tasks complete immediately with an error (offline). */
 static void ses_fail_async(void *blk) {
     if (!blk) return;
-    id err = RT_SEND2(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSURLErrorDomain"), long, -1009);
+    id err = RT_SEND3(id, (id)rt_class_named("NSError"), "errorWithDomain:code:userInfo:", id, rt_str("NSURLErrorDomain"), long, -1009, id, NULL);
     ((void (*)(void *, id, id, id))((struct rt_block *)blk)->invoke)(blk, NULL, NULL, err);
 }
 struct ses_task { Class isa; void *blk; long started; };
@@ -662,11 +675,20 @@ static void task_resume(id self, SEL s) {
     if (b) { ses_fail_async(b); _Block_release(b); }
 }
 static void task_cancel(id self, SEL s) { (void)self; (void)s; }
-static id ses_task_make(void *blk) { id o = rt_alloc_instance(RT_CLASS(NSObject), sizeof(struct ses_task) - sizeof(void *)); ((struct ses_task *)o)->blk = blk ? _Block_copy(blk) : NULL; return objc_autorelease(o); }
+RT_DEFINE_CLASS(NSURLSessionTask);
+RT_DEFINE_CLASS(NSURLSessionDataTask);
+static long g_task_ids;
+static id task_nil(id self, SEL s) { (void)self; (void)s; return NULL; }
+static long task_id(id self, SEL s) { (void)s; return (long)(((uintptr_t)self >> 4) & 0xffffff); }
+static long task_state(id self, SEL s) { (void)s; return ((struct ses_task *)self)->started ? 3 : 1; }
+static id ses_task_make(void *blk) { id o = rt_alloc_instance(RT_CLASS(NSURLSessionDataTask), 0); g_task_ids++; ((struct ses_task *)o)->blk = blk ? _Block_copy(blk) : NULL; return objc_autorelease(o); }
 static id ses_dataTaskReq(id self, SEL s, id req, void *blk) { (void)self; (void)s; (void)req; return ses_task_make(blk); }
+static id ses_dataTaskNoBlock(id self, SEL s, id req) { (void)self; (void)s; (void)req; return ses_task_make(NULL); }
 static id ses_cfg(Class c, SEL s) { (void)s; return objc_autorelease(rt_alloc_instance(c, 0)); }
 static id ck_shared(Class c, SEL s) { (void)s; return singleton(c, &g_cookies); }
 static id ck_cookies(id self, SEL s) { (void)self; (void)s; return objc_autorelease(rt_array_new(NULL, 0)); }
+static id cache_init3(id self, SEL s, unsigned long m, unsigned long d, id p) { (void)s; (void)m; (void)d; (void)p; return self; }
+static unsigned long cache_cap(id self, SEL s) { (void)self; (void)s; return 4u << 20; }
 static id uc_shared(Class c, SEL s) { (void)s; return singleton(c, &g_urlcache); }
 
 /* ===================================================================== NSOrderedSet */
@@ -781,16 +803,23 @@ void rt_foundation_more2_init(void) {
     IM(rq, "initWithURL:", rq_initWithURL); IM(rq, "URL", rq_url); IM(rq, "HTTPMethod", rq_method); IM(rq, "HTTPBody", rq_body);
     IM(rq, "allHTTPHeaderFields", rq_headers);
     IM(mrq, "setHTTPMethod:", rq_setMethod); IM(mrq, "setHTTPBody:", rq_setBody); IM(mrq, "setValue:forHTTPHeaderField:", rq_setHeader);
-    IM(mrq, "addValue:forHTTPHeaderField:", rq_setHeader); IM(mrq, "setTimeoutInterval:", rq_setTimeout); IM(mrq, "setCachePolicy:", noop_long);
+    IM(mrq, "addValue:forHTTPHeaderField:", rq_setHeader); IM(mrq, "setAllHTTPHeaderFields:", rq_setAllHeaders);
+    IM(mrq, "setHTTPShouldHandleCookies:", noop_long); IM(RT_CLASS(NSDictionary), "initWithObjects:forKeys:", dict_initObjsKeys); IM(mrq, "setTimeoutInterval:", rq_setTimeout); IM(mrq, "setCachePolicy:", noop_long);
     NEWCLASS(NSURLSession, o, 0);
     NEWCLASS(NSURLSessionConfiguration, o, 0);
     Class ses = RT_CLASS(NSURLSession), cfg = RT_CLASS(NSURLSessionConfiguration);
     CM(ses, "sharedSession", ses_shared); CM(ses, "sessionWithConfiguration:", ses_withConfig);
     CM(ses, "sessionWithConfiguration:delegate:delegateQueue:", ses_withConfigDelegate);
-    IM(ses, "dataTaskWithRequest:completionHandler:", ses_dataTaskReq); IM(ses, "dataTaskWithURL:completionHandler:", ses_dataTaskReq);
+    IM(ses, "dataTaskWithRequest:completionHandler:", ses_dataTaskReq); IM(ses, "dataTaskWithRequest:", ses_dataTaskNoBlock); IM(ses, "dataTaskWithURL:", ses_dataTaskNoBlock);
+    IM(ses, "downloadTaskWithRequest:", ses_dataTaskNoBlock); IM(ses, "uploadTaskWithRequest:fromData:", ses_dataTaskNoBlock); IM(ses, "dataTaskWithURL:completionHandler:", ses_dataTaskReq);
     IM(ses, "uploadTaskWithRequest:fromData:completionHandler:", ses_dataTaskReq);
     IM(ses, "invalidateAndCancel", noop_obj); IM(ses, "finishTasksAndInvalidate", noop_obj);
-    IM(o, "resume", task_resume); IM(o, "cancel", task_cancel);   /* minimal task protocol on the anonymous task objects */
+    rt_native_class(RT_CLASS(NSURLSessionTask), &iosrt_meta_NSURLSessionTask, "NSURLSessionTask", o, sizeof(struct ses_task) - sizeof(void *));
+    rt_native_class(RT_CLASS(NSURLSessionDataTask), &iosrt_meta_NSURLSessionDataTask, "NSURLSessionDataTask", RT_CLASS(NSURLSessionTask), 0);
+    Class tk = RT_CLASS(NSURLSessionTask);
+    IM(tk, "resume", task_resume); IM(tk, "cancel", task_cancel); IM(tk, "suspend", task_cancel);
+    IM(tk, "originalRequest", task_nil); IM(tk, "currentRequest", task_nil); IM(tk, "response", task_nil); IM(tk, "error", task_nil);
+    IM(tk, "taskIdentifier", task_id); IM(tk, "state", task_state);
     CM(cfg, "defaultSessionConfiguration", ses_cfg); CM(cfg, "ephemeralSessionConfiguration", ses_cfg);
     CM(cfg, "backgroundSessionConfigurationWithIdentifier:", ses_cfg);
     IM(cfg, "setTimeoutIntervalForRequest:", noop_long); IM(cfg, "setHTTPAdditionalHeaders:", noop_obj);
@@ -801,6 +830,9 @@ void rt_foundation_more2_init(void) {
     NEWCLASS(NSURLCache, o, 0);
     CM(RT_CLASS(NSURLCache), "sharedURLCache", uc_shared); CM(RT_CLASS(NSURLCache), "setSharedURLCache:", noop_obj);
     IM(RT_CLASS(NSURLCache), "removeAllCachedResponses", noop_obj);
+    IM(RT_CLASS(NSURLCache), "initWithMemoryCapacity:diskCapacity:diskPath:", cache_init3);
+    IM(RT_CLASS(NSURLCache), "memoryCapacity", cache_cap); IM(RT_CLASS(NSURLCache), "diskCapacity", cache_cap);
+    IM(cfg, "setHTTPCookieAcceptPolicy:", noop_long); IM(cfg, "setHTTPShouldSetCookies:", noop_long);
 
     /* additions to existing classes */
     extern char iosrt_imp_setWithObjects[];

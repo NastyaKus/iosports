@@ -48,6 +48,7 @@ DVAR iosrt_imp_initWithObjects,            rt_NSArray_initWithObjects,          
 DVAR iosrt_imp_dictionaryWithObjectsAndKeys, rt_NSDictionary_dictionaryWithObjectsAndKeys, x3
 DVAR iosrt_imp_initWithObjectsAndKeys,     rt_NSDictionary_initWithObjectsAndKeys, x3
 DVAR iosrt_imp_exceptionRaiseFormat,       rt_NSException_raiseFormat,             x4
+DVAR iosrt_imp_predicateWithFormat,        rt_NSPredicate_predicateWithFormat,     x3
 DVAR iosrt_imp_setWithObjects,             rt_NSSet_setWithObjects,                x3
 DVAR iosrt_imp_setInitWithObjects,         rt_NSSet_initWithObjects,               x3
 DVAR iosrt_imp_handleFailureInMethod,      rt_NSAssertionHandler_handleFailure,    x7

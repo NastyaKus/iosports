@@ -92,6 +92,8 @@ int32_t iosrt_AudioComponentInstanceNew(void *comp, struct audio_unit **out) {
     return 0;
 }
 static int valid(struct audio_unit *u) { return u && u->magic == UNIT_MAGIC; }
+/* the component handle is just a description; the instance keeps its own copy */
+void *iosrt_AudioComponentInstanceGetComponent(struct audio_unit *u) { return valid(u) ? (void *)&u->desc : NULL; }
 int32_t iosrt_AudioOutputUnitStop(struct audio_unit *u);
 int32_t iosrt_AudioComponentInstanceDispose(struct audio_unit *u) {
     if (!valid(u)) return -50;
@@ -145,6 +147,8 @@ int32_t iosrt_AudioUnitGetProperty(struct audio_unit *u, uint32_t prop, uint32_t
     case 11: *(uint32_t *)data = u->nbus; *size = 4; return 0;
     case 12: { double l = 0; memcpy(data, &l, 8); *size = 8; return 0; }        /* Latency */
     case 2006: *(uint32_t *)data = 1; *size = 4; return 0;                        /* IsRunning-ish */
+    case 2001: *(uint32_t *)data = u->running ? 1 : 0; *size = 4; return 0;        /* kAudioOutputUnitProperty_IsRunning */
+    case 101:  *(uint32_t *)data = 0; *size = 4; return 0;                        /* IsInterAppConnected: never */
     default: return -10879;  /* kAudioUnitErr_InvalidProperty */
     }
 }
@@ -416,6 +420,8 @@ static rt_bool as_yes_err(id self, SEL s, id a, id *err) { (void)self; (void)s; 
 static rt_bool as_yes_err2(id self, SEL s, id a, long b, id *err) { (void)self; (void)s; (void)a; (void)b; if (err) *err = NULL; return 1; }
 static rt_bool as_setActive(id self, SEL s, long a, id *err) { (void)self; (void)s; (void)a; if (err) *err = NULL; return 1; }
 static rt_bool as_setDouble(id self, SEL s, double v, id *err) { (void)self; (void)s; (void)v; if (err) *err = NULL; return 1; }
+static id as_emptyArr(id self, SEL s) { (void)self; (void)s; return objc_autorelease(rt_array_new(NULL, 0)); }
+static long as_zero_l(id self, SEL s) { (void)self; (void)s; return 0; }
 static double as_rate(id self, SEL s) { (void)self; (void)s; return 48000; }
 static double as_iobuf(id self, SEL s) { (void)self; (void)s; return 256.0 / 48000; }
 static double as_latency(id self, SEL s) { (void)self; (void)s; return 0.01; }
@@ -423,6 +429,23 @@ static rt_bool as_inputAvailable(id self, SEL s) { (void)self; (void)s; return 1
 static long as_channels(id self, SEL s) { (void)self; (void)s; return 2; }
 static id as_category(id self, SEL s) { (void)self; (void)s; return rt_str("AVAudioSessionCategoryPlayAndRecord"); }
 static void as_requestRecordPermission(id self, SEL s, void *blk) { (void)self; (void)s; if (blk) ((void (*)(void *, long))((struct rt_block *)blk)->invoke)(blk, 1); }
+RT_DEFINE_CLASS(AVAudioSessionRouteDescription);
+RT_DEFINE_CLASS(AVAudioSessionPortDescription);
+static id g_route;
+static id port_type(id self, SEL s) { (void)s; return rt_str(*(long *)((uint8_t *)self + 8) ? "MicrophoneBuiltIn" : "Speaker"); }
+static id port_name(id self, SEL s) { (void)s; return rt_str(*(long *)((uint8_t *)self + 8) ? "iPhone Microphone" : "Speaker"); }
+static id route_ports(id self, SEL s, long input) {
+    (void)self; (void)s;
+    id p = rt_alloc_instance(RT_CLASS(AVAudioSessionPortDescription), 8); *(long *)((uint8_t *)p + 8) = input;
+    id a = rt_array_new(&p, 1); objc_release(p); return objc_autorelease(a);
+}
+static id route_outputs(id self, SEL s) { return route_ports(self, s, 0); }
+static id route_inputs(id self, SEL s) { return route_ports(self, s, 1); }
+static id as_currentRoute(id self, SEL s) { (void)self; (void)s; if (!g_route) g_route = rt_alloc_instance(RT_CLASS(AVAudioSessionRouteDescription), 0); return g_route; }
+static rt_bool as_setFloat(id self, SEL s, float v, id *err) { (void)self; (void)s; (void)v; if (err) *err = NULL; return 1; }
+static float as_inputGain(id self, SEL s) { (void)self; (void)s; return 1.0f; }
+static rt_bool as_setLong(id self, SEL s, long v, id *err) { (void)self; (void)s; (void)v; if (err) *err = NULL; return 1; }
+static id as_availableInputs(id self, SEL s) { return route_ports(self, s, 1); }
 static unsigned long as_recordPermission(id self, SEL s) { (void)self; (void)s; return FOURCC('g', 'r', 'n', 't'); }
 
 id iosrt_AVAudioSessionCategoryPlayback, iosrt_AVAudioSessionCategoryPlayAndRecord, iosrt_AVAudioSessionCategoryRecord,
@@ -440,7 +463,17 @@ void rt_audio_init(void) {
     IM(a, "sampleRate", as_rate); IM(a, "preferredSampleRate", as_rate); IM(a, "IOBufferDuration", as_iobuf);
     IM(a, "outputLatency", as_latency); IM(a, "inputLatency", as_latency); IM(a, "isInputAvailable", as_inputAvailable);
     IM(a, "inputAvailable", as_inputAvailable); IM(a, "outputNumberOfChannels", as_channels); IM(a, "inputNumberOfChannels", as_channels);
-    IM(a, "category", as_category); IM(a, "requestRecordPermission:", as_requestRecordPermission); IM(a, "recordPermission", as_recordPermission);
+    IM(a, "category", as_category); IM(a, "currentRoute", as_currentRoute); IM(a, "inputDataSources", as_emptyArr); IM(a, "outputDataSources", as_emptyArr); IM(a, "availableInputs", as_availableInputs);
+    IM(a, "setInputGain:error:", as_setFloat); IM(a, "inputGain", as_inputGain); IM(a, "isInputGainSettable", as_inputAvailable);
+    IM(a, "setPreferredInputNumberOfChannels:error:", as_setLong); IM(a, "setPreferredOutputNumberOfChannels:error:", as_setLong);
+    IM(a, "overrideOutputAudioPort:error:", as_setLong); IM(a, "setPreferredInput:error:", as_yes_err);
+    IM(a, "otherAudioPlaying", as_zero_l); IM(a, "isOtherAudioPlaying", as_zero_l); IM(a, "mode", as_category);
+    rt_native_class(RT_CLASS(AVAudioSessionRouteDescription), &iosrt_meta_AVAudioSessionRouteDescription, "AVAudioSessionRouteDescription", RT_CLASS(NSObject), 0);
+    rt_native_class(RT_CLASS(AVAudioSessionPortDescription), &iosrt_meta_AVAudioSessionPortDescription, "AVAudioSessionPortDescription", RT_CLASS(NSObject), 8);
+    rt_native_method(RT_CLASS(AVAudioSessionRouteDescription), "outputs", (void *)route_outputs, "");
+    rt_native_method(RT_CLASS(AVAudioSessionRouteDescription), "inputs", (void *)route_inputs, "");
+    rt_native_method(RT_CLASS(AVAudioSessionPortDescription), "portType", (void *)port_type, "");
+    rt_native_method(RT_CLASS(AVAudioSessionPortDescription), "portName", (void *)port_name, ""); IM(a, "requestRecordPermission:", as_requestRecordPermission); IM(a, "recordPermission", as_recordPermission);
 #define S(v, t) v = rt_str_new(t)
     S(iosrt_AVAudioSessionCategoryPlayback, "AVAudioSessionCategoryPlayback");
     S(iosrt_AVAudioSessionCategoryPlayAndRecord, "AVAudioSessionCategoryPlayAndRecord");

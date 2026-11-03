@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/libz.framework/libz'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_adler32', '_compress', '_compress2', '_compressBound', '_crc32', '_deflate', '_deflateBound', '_deflateEnd', '_deflateInit2_', '_deflateInit_', '_inflate', '_inflateEnd', '_inflateInit2_', '_inflateInit_', '_inflateReset', '_uncompress', '_zlibVersion' ]
+...

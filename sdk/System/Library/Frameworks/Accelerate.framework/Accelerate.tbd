@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/Accelerate.framework/Accelerate'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_vDSP_maxmgv', '_vDSP_maxmgvD', '_vDSP_maxmgvi', '_vDSP_maxmgviD', '_vDSP_maxv', '_vDSP_maxvD', '_vDSP_meamgv', '_vDSP_meamgvD', '_vDSP_minv', '_vDSP_minvD', '_vDSP_rect', '_vDSP_rectD', '_vDSP_vadd', '_vDSP_vaddD', '_vDSP_vclip', '_vDSP_vclipD', '_vDSP_vclr', '_vDSP_vclrD', '_vDSP_vdbcon', '_vDSP_vdbconD', '_vDSP_vfill', '_vDSP_vfillD', '_vDSP_vfix16', '_vDSP_vfix16D', '_vDSP_vflt16', '_vDSP_vflt16D', '_vDSP_vmax', '_vDSP_vmaxD', '_vDSP_vmul', '_vDSP_vmulD', '_vDSP_vramp', '_vDSP_vrampD', '_vDSP_vrampmul', '_vDSP_vrampmul2', '_vDSP_vrampmul2D', '_vDSP_vrampmulD', '_vDSP_vrampmuladd', '_vDSP_vrampmuladdD', '_vDSP_vrvrs', '_vDSP_vrvrsD', '_vDSP_vsadd', '_vDSP_vsaddD', '_vDSP_vsma', '_vDSP_vsmaD', '_vDSP_vsmul', '_vDSP_vsmulD' ]
+...

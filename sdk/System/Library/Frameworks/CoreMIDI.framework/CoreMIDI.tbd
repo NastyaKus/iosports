@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-ios ]
+install-name: '/System/Library/Frameworks/CoreMIDI.framework/CoreMIDI'
+current-version: 1
+exports:
+  - targets: [ arm64-ios ]
+    symbols: [ '_MIDIClientCreate', '_MIDIClientCreateWithBlock', '_MIDIClientDispose', '_MIDIDestinationCreate', '_MIDIEndpointDispose', '_MIDIFlushOutput', '_MIDIGetDestination', '_MIDIGetNumberOfDestinations', '_MIDIGetNumberOfDevices', '_MIDIGetNumberOfSources', '_MIDIGetSource', '_MIDIInputPortCreate', '_MIDINetworkBonjourServiceType', '_MIDIObjectGetIntegerProperty', '_MIDIObjectGetStringProperty', '_MIDIObjectSetIntegerProperty', '_MIDIObjectSetStringProperty', '_MIDIOutputPortCreate', '_MIDIPacketListAdd', '_MIDIPacketListInit', '_MIDIPortConnectSource', '_MIDIPortDisconnectSource', '_MIDIPortDispose', '_MIDIReceived', '_MIDIRestart', '_MIDISend', '_MIDISourceCreate', '_kMIDIPropertyAdvanceScheduleTimeMuSec', '_kMIDIPropertyDisplayName', '_kMIDIPropertyManufacturer', '_kMIDIPropertyModel', '_kMIDIPropertyName', '_kMIDIPropertyOffline', '_kMIDIPropertyPrivate', '_kMIDIPropertyUniqueID' ]
+    objc-classes: [ MIDINetworkConnection, MIDINetworkHost, MIDINetworkSession ]
+...

@@ -314,11 +314,15 @@ int iosrt_pthread_once(long *once, void (*fn)(void)) {
     return 0;
 }
 struct thread_start { void *(*fn)(void *); void *arg; };
+void rt_thread_register(void);
+void rt_thread_unregister(void);
 static void *thread_tramp(void *p) {
     struct thread_start s = *(struct thread_start *)p; free(p);
+    rt_thread_register();
     void *pool = objc_autoreleasePoolPush();
     void *r = s.fn(s.arg);
     objc_autoreleasePoolPop(pool);
+    rt_thread_unregister();
     return r;
 }
 int iosrt_pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*fn)(void *), void *arg) {
@@ -517,7 +521,16 @@ static void *serial_worker(void *p) {
         run_item(it);
     }
 }
+struct spawn_arg { void *(*fn)(void *); void *arg; };
+static void *spawn_tramp(void *p) {
+    struct spawn_arg a = *(struct spawn_arg *)p; free(p);
+    rt_thread_register();
+    void *r = a.fn(a.arg);
+    rt_thread_unregister();
+    return r;
+}
 static void spawn(void *(*fn)(void *), void *arg) {
+    struct spawn_arg *sa = rt_xmalloc(sizeof *sa); sa->fn = fn; sa->arg = arg; fn = spawn_tramp; arg = sa;
     pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&a, 1 << 20);
     pthread_create(&t, &a, fn, arg); pthread_attr_destroy(&a);

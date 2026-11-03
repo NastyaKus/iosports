@@ -243,3 +243,73 @@ int32_t iosrt_CCCrypt(uint32_t op, uint32_t alg, uint32_t opt, const void *key, 
     return -4305;    /* kCCUnimplemented */
 }
 void *iosrt_reallocf(void *p, size_t n) { void *r = realloc(p, n); if (!r) free(p); return r; }
+
+/* ------------------------------------------- vm_allocate / vm_remap mirroring */
+/* Darwin VM calls are used for "magic ring buffers" (e.g. TPCircularBuffer): allocate
+ * 2N bytes, free the upper half, then remap the lower half there. Emulated with a
+ * memfd per allocation and MAP_SHARED mappings, so remaps alias the same pages. */
+#include <sys/mman.h>
+#include <sys/syscall.h>
+struct vm_region { uintptr_t addr; size_t size; int fd; };
+static struct vm_region vm_regions[256]; static int n_vm_regions;
+static pthread_mutex_t vm_lock = PTHREAD_MUTEX_INITIALIZER;
+int iosrt_vm_allocate(uint32_t task, uintptr_t *addr, size_t size, int flags) {
+    (void)task;
+    int fd = (int)syscall(SYS_memfd_create, "iosrt-vm", 0);
+    if (fd < 0 || ftruncate(fd, (off_t)size) != 0) { if (fd >= 0) close(fd); return 3; /* KERN_NO_SPACE */ }
+    void *want = (flags & 1) ? NULL : (void *)*addr;      /* VM_FLAGS_ANYWHERE = 1 */
+    void *p = mmap(want, size, PROT_READ | PROT_WRITE, MAP_SHARED | (want ? MAP_FIXED : 0), fd, 0);
+    if (p == MAP_FAILED) { close(fd); return 3; }
+    pthread_mutex_lock(&vm_lock);
+    if (n_vm_regions < 256) vm_regions[n_vm_regions++] = (struct vm_region){ (uintptr_t)p, size, fd };
+    pthread_mutex_unlock(&vm_lock);
+    *addr = (uintptr_t)p;
+    return KERN_SUCCESS;
+}
+int iosrt_vm_deallocate(uint32_t task, uintptr_t addr, size_t size) {
+    (void)task;
+    if (size) munmap((void *)addr, size);
+    pthread_mutex_lock(&vm_lock);
+    for (int i = 0; i < n_vm_regions; i++)
+        if (vm_regions[i].addr == addr && vm_regions[i].size <= size) { close(vm_regions[i].fd); vm_regions[i] = vm_regions[--n_vm_regions]; break; }
+    pthread_mutex_unlock(&vm_lock);
+    return KERN_SUCCESS;
+}
+int iosrt_vm_remap(uint32_t target, uintptr_t *taddr, size_t size, uintptr_t mask, int flags, uint32_t src_task,
+                   uintptr_t saddr, long copy, int *cur, int *max, unsigned inherit) {
+    (void)target; (void)mask; (void)src_task; (void)copy; (void)inherit;
+    int fd = -1; off_t off = 0;
+    pthread_mutex_lock(&vm_lock);
+    for (int i = 0; i < n_vm_regions; i++)
+        if (saddr >= vm_regions[i].addr && saddr + size <= vm_regions[i].addr + vm_regions[i].size) { fd = vm_regions[i].fd; off = (off_t)(saddr - vm_regions[i].addr); break; }
+    pthread_mutex_unlock(&vm_lock);
+    if (fd < 0) return KERN_FAILURE;
+    void *want = (flags & 1) ? NULL : (void *)*taddr;
+    void *p = mmap(want, size, PROT_READ | PROT_WRITE, MAP_SHARED | (want ? MAP_FIXED : 0), fd, off);
+    if (p == MAP_FAILED) return KERN_FAILURE;
+    *taddr = (uintptr_t)p;
+    if (cur) *cur = 3; if (max) *max = 3;
+    return KERN_SUCCESS;
+}
+/* CFBundle keys */
+id iosrt_kCFBundleExecutableKey, iosrt_kCFBundleIdentifierKey, iosrt_kCFBundleVersionKey, iosrt_kCFBundleNameKey,
+   iosrt_kCFBundleInfoDictionaryVersionKey, iosrt_kCFBundleDevelopmentRegionKey, iosrt_kCFBundleLocalizationsKey;
+void rt_stubs_init(void) {
+    iosrt_kCFBundleExecutableKey = rt_str_new("CFBundleExecutable");
+    iosrt_kCFBundleIdentifierKey = rt_str_new("CFBundleIdentifier");
+    iosrt_kCFBundleVersionKey = rt_str_new("CFBundleVersion");
+    iosrt_kCFBundleNameKey = rt_str_new("CFBundleName");
+    iosrt_kCFBundleInfoDictionaryVersionKey = rt_str_new("CFBundleInfoDictionaryVersion");
+    iosrt_kCFBundleDevelopmentRegionKey = rt_str_new("CFBundleDevelopmentRegion");
+    iosrt_kCFBundleLocalizationsKey = rt_str_new("CFBundleLocalizations");
+}
+
+/* guests (crash reporters) installing signal handlers must not replace the runtime's */
+int iosrt_sigaction(int sig, const void *act, void *old) { (void)sig; (void)act; if (old) memset(old, 0, 16); return 0; }
+int iosrt_sigaltstack(const void *ss, void *old) { (void)ss; if (old) memset(old, 0, 24); return 0; }
+int iosrt_sigprocmask(int how, const void *set, void *old) { (void)how; (void)set; if (old) memset(old, 0, 4); return 0; }
+int iosrt_pthread_sigmask(int how, const void *set, void *old) { return iosrt_sigprocmask(how, set, old); }
+/* NSSetUncaughtExceptionHandler: remembered and called before the guest is terminated */
+void *iosrt_uncaught_handler;
+void iosrt_NSSetUncaughtExceptionHandler(void *h) { iosrt_uncaught_handler = h; }
+void *iosrt_NSGetUncaughtExceptionHandler(void) { return iosrt_uncaught_handler; }

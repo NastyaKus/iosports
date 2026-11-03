@@ -236,11 +236,42 @@ static void assoc_clear(id obj) {
 void objc_removeAssociatedObjects(id obj) { assoc_clear(obj); }
 
 /* ------------------------------------------------------- @synchronized */
-static pthread_mutex_t sync_locks[64];
-static int sync_init_done;
-static pthread_mutex_t *sync_for(id o) { return &sync_locks[((uintptr_t)o >> 4) & 63]; }
-int objc_sync_enter(id o) { if (o) pthread_mutex_lock(sync_for(o)); return 0; }
-int objc_sync_exit(id o) { if (o) pthread_mutex_unlock(sync_for(o)); return 0; }
+/* Per-object recursive locks (like libobjc's SyncData): striped locks would
+ * make unrelated objects contend and deadlock under nested @synchronized. */
+struct sync_data { struct sync_data *next; id obj; int users; pthread_mutex_t m; };
+#define SYNC_BUCKETS 256
+static struct sync_data *sync_tab[SYNC_BUCKETS];
+static pthread_mutex_t sync_tab_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct sync_data *sync_get(id o, int acquire) {
+    unsigned b = (unsigned)(((uintptr_t)o >> 4) % SYNC_BUCKETS);
+    pthread_mutex_lock(&sync_tab_lock);
+    struct sync_data *d, *free_d = NULL;
+    for (d = sync_tab[b]; d; d = d->next) {
+        if (d->obj == o) break;
+        if (!d->users && !free_d) free_d = d;
+    }
+    if (!d && acquire) {
+        if (free_d) { d = free_d; d->obj = o; }
+        else {
+            d = calloc(1, sizeof *d); d->obj = o;
+            pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+            pthread_mutex_init(&d->m, &a); pthread_mutexattr_destroy(&a);
+            d->next = sync_tab[b]; sync_tab[b] = d;
+        }
+    }
+    if (d && acquire) d->users++;
+    pthread_mutex_unlock(&sync_tab_lock);
+    return d;
+}
+int objc_sync_enter(id o) { if (o) pthread_mutex_lock(&sync_get(o, 1)->m); return 0; }
+int objc_sync_exit(id o) {
+    if (!o) return 0;
+    struct sync_data *d = sync_get(o, 0);
+    if (!d) return -1; /* OBJC_SYNC_NOT_OWNING_THREAD_ERROR */
+    pthread_mutex_unlock(&d->m);
+    pthread_mutex_lock(&sync_tab_lock); d->users--; pthread_mutex_unlock(&sync_tab_lock);
+    return 0;
+}
 
 /* ------------------------------------------------------------- blocks */
 #define BLOCK_FIELD_IS_OBJECT 3
@@ -333,8 +364,10 @@ static void blk_invoke(id self, SEL s) { (void)s; ((void (*)(void *))((struct rt
 
 /* -------------------------------------------------------- exceptions */
 void rt_print_backtrace(void);
+extern void *iosrt_uncaught_handler;
 _Noreturn void objc_exception_throw(id exc) {
     rt_print_backtrace();
+    if (iosrt_uncaught_handler) { void *h = iosrt_uncaught_handler; iosrt_uncaught_handler = NULL; ((void (*)(id))h)(exc); }
     char *d = rt_describe(exc);
     char msg[1024];
     id name = rt_responds(exc, rt_sel("name")) ? RT_SEND0(id, exc, "name") : NULL;
@@ -482,11 +515,6 @@ void objc_copyStruct(void *dst, const void *src, ptrdiff_t size, long atomic, lo
 void objc_copyCppObjectAtomic(void *dst, const void *src, void (*copyHelper)(void *, const void *)) { pthread_mutex_lock(&prop_lock); copyHelper(dst, src); pthread_mutex_unlock(&prop_lock); }
 
 void rt_blocks_init(void) {
-    if (!sync_init_done) {
-        pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
-        for (int i = 0; i < 64; i++) pthread_mutex_init(&sync_locks[i], &a);
-        sync_init_done = 1;
-    }
     rt_native_class(RT_CLASS(NSBlock), &iosrt_meta_NSBlock, "NSBlock", RT_CLASS(NSObject), 0);
     rt_native_class(RT_CLASS(__NSStackBlock), &iosrt_meta___NSStackBlock, "__NSStackBlock__", RT_CLASS(NSBlock), 0);
     rt_native_class(RT_CLASS(__NSMallocBlock), &iosrt_meta___NSMallocBlock, "__NSMallocBlock__", RT_CLASS(NSBlock), 0);

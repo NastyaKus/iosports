@@ -197,7 +197,6 @@ id iosrt_CFDateCreate(const void *alloc, double t) { (void)alloc; return objc_re
 double iosrt_CFDateGetAbsoluteTime(id d) { return RT_SEND0(double, d, "timeIntervalSinceReferenceDate"); }
 void iosrt_CFRunLoopAddSource(void *rl, void *src, id mode) { (void)rl; (void)src; (void)mode; }
 void iosrt_CFRunLoopRemoveSource(void *rl, void *src, id mode) { (void)rl; (void)src; (void)mode; }
-void iosrt_CFRunLoopWakeUp(void *rl) { (void)rl; }
 void *iosrt_CFRunLoopObserverCreate(const void *a, unsigned long act, long rep, long ord, void *cb, void *ctx) { (void)a; (void)act; (void)rep; (void)ord; (void)cb; (void)ctx; return NULL; }
 void iosrt_CFRunLoopAddObserver(void *rl, void *o, id mode) { (void)rl; (void)o; (void)mode; }
 uint32_t iosrt_CFStringConvertNSStringEncodingToEncoding(unsigned long e) { return e == 4 ? 0x08000100 : e == 1 ? 0x0600 : 0x08000100; }
@@ -208,3 +207,6 @@ void rt_cf_init(void) {
     iosrt_kCFBooleanFalse = objc_retain(RT_SEND1(id, (id)RT_CLASS(NSNumber), "numberWithBool:", long, 0));
     iosrt_kCFNull = RT_SEND0(id, (id)RT_CLASS(NSNull), "null");
 }
+
+struct cfuuid_bytes { uint8_t b[16]; };
+struct cfuuid_bytes iosrt_CFUUIDGetUUIDBytes(id u) { struct cfuuid_bytes r; memset(&r, 0, sizeof r); if (u) RT_SEND1(void, u, "getUUIDBytes:", uint8_t *, r.b); return r; }

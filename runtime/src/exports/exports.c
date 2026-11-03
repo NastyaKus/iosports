@@ -17,6 +17,9 @@
 #include <sys/time.h>
 #include <sched.h>
 #include <poll.h>
+#ifdef IOSRT_WITH_ZLIB
+#include <zlib.h>
+#endif
 
 /* This TU deliberately does not include internal.h: every runtime symbol is
  * declared opaquely (extern char x[]) by the generated decls.h. */

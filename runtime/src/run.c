@@ -27,6 +27,7 @@ static void runtime_init(void) {
     rt_foundation_init();
     rt_uikit_init();
     rt_audio_init();
+    { void rt_midi_init(void); rt_midi_init(); }
 }
 RT_EXPORT void iosrt_init(void) { pthread_once(&init_once, runtime_init); }
 
@@ -110,7 +111,8 @@ static void dump_handler(int sig, siginfo_t *si, void *uc_) {
     char buf[512]; uint64_t off = 0;
     uint64_t pc = (uint64_t)uc->uc_mcontext.pc;
     const char *sym = sym_for(pc, &off);
-    int n = snprintf(buf, sizeof buf, "[iosrt] watchdog: main thread pc=0x%llx %s+0x%llx\n", (unsigned long long)pc, sym ? sym : "runtime", (unsigned long long)off);
+    char tn[32] = ""; pthread_getname_np(pthread_self(), tn, sizeof tn);
+    int n = snprintf(buf, sizeof buf, "[iosrt] watchdog: %s thread [%s] pc=0x%llx %s+0x%llx\n", rt_is_guest_main_thread() ? "main" : "worker", tn, (unsigned long long)pc, sym ? sym : "runtime", (unsigned long long)off);
     rt_out(2, buf, (size_t)n);
     uint64_t fp = (uint64_t)uc->uc_mcontext.regs[29];
     for (int i = 0; i < 16 && fp && (fp & 7) == 0; i++) {
@@ -123,9 +125,29 @@ static void dump_handler(int sig, siginfo_t *si, void *uc_) {
         fp = fr[0];
     }
 }
+/* registry of guest-visible threads (for watchdog dumps) */
+static pthread_t g_threads[256]; static int n_threads;
+static pthread_mutex_t threads_lock = PTHREAD_MUTEX_INITIALIZER;
+void rt_thread_register(void) {
+    pthread_mutex_lock(&threads_lock);
+    if (n_threads < 256) g_threads[n_threads++] = pthread_self();
+    pthread_mutex_unlock(&threads_lock);
+}
+void rt_thread_unregister(void) {
+    pthread_mutex_lock(&threads_lock);
+    for (int i = 0; i < n_threads; i++) if (pthread_equal(g_threads[i], pthread_self())) { g_threads[i] = g_threads[--n_threads]; break; }
+    pthread_mutex_unlock(&threads_lock);
+}
 static void *watchdog(void *p) {
     int secs = (int)(intptr_t)p;
-    for (;;) { sleep((unsigned)secs); if (guest_main_valid) pthread_kill(guest_main, SIGUSR2); }
+    for (;;) {
+        sleep((unsigned)secs);
+        if (guest_main_valid) pthread_kill(guest_main, SIGUSR2);
+        usleep(200000);
+        pthread_mutex_lock(&threads_lock);
+        for (int i = 0; i < n_threads; i++) { pthread_kill(g_threads[i], SIGUSR2); usleep(100000); }
+        pthread_mutex_unlock(&threads_lock);
+    }
     return NULL;
 }
 static void install_crash_handler(void) {

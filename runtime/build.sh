@@ -28,5 +28,5 @@ case $target in
 case $target in
   android|all)
     echo "== building android-arm64"
-    "$TC/bin/clang" --target=aarch64-linux-android29 $CFLAGS -DIOSRT_WITH_CXX $CSRCS \
-        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lm ;; esac
+    "$TC/bin/clang" --target=aarch64-linux-android29 $CFLAGS -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB $CSRCS \
+        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lz -lm ;; esac
