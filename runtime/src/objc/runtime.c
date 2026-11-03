@@ -536,6 +536,9 @@ static void initialize_class(Class cls) {
     pthread_mutex_unlock(&rt_lock);
 }
 
+/* lenient mode: an unknown initializer keeps the object (returns self), anything else returns nil/0 */
+static id self_imp(id self, SEL sel) { (void)sel; return self; }
+static IMP lenient_imp(SEL sel) { extern char iosrt_nil_imp[]; return strncmp(sel, "init", 4) ? (IMP)iosrt_nil_imp : (IMP)self_imp; }
 static id unrecognized_imp(id self, SEL sel) {
     Class c = self->isa;
     char msg[512];
@@ -597,8 +600,8 @@ static IMP lookup_send(Class cls, id self, SEL sel, id *self_slot) {
         if (!rt_is_strict()) {
             char key[512];
             snprintf(key, sizeof key, "%c[%s %s]", meta ? '+' : '-', rc->name, sel);
-            if (rt_first_time(key)) rt_warn("missing: %s unrecognized selector (returns nil)", key);
-            return (IMP)iosrt_nil_imp;
+            if (rt_first_time(key)) rt_warn("missing: %s unrecognized selector (returns %s)", key, strncmp(sel, "init", 4) ? "nil" : "self");
+            return lenient_imp(sel);
         }
     }
     return (IMP)unrecognized_imp;
@@ -611,15 +614,23 @@ IMP rt_lookup_for_send(id self, SEL sel) {
 IMP rt_lookup_for_send_slot(id self, SEL sel, id *slot) { return lookup_send(self->isa, self, sel, slot); }
 
 struct objc_super { id receiver; Class cls; };
+static IMP super_missing(struct objc_super *sup, Class start, SEL sel) {
+    int rt_is_strict(void); int rt_first_time(const char *key);
+    if (rt_is_strict()) return (IMP)unrecognized_imp;
+    char key[512];
+    snprintf(key, sizeof key, "super -[%s %s]", start ? rt_cls(start)->name : rt_cls(sup->cls)->name, sel);
+    if (rt_first_time(key)) rt_warn("missing: %s unrecognized selector (returns %s)", key, strncmp(sel, "init", 4) ? "nil" : "self");
+    return lenient_imp(sel);
+}
 IMP rt_lookup_super2(struct objc_super *sup, SEL sel) {
     Class start = sup->cls->superclass;
-    if (!start) return (IMP)unrecognized_imp;
+    if (!start) return super_missing(sup, NULL, sel);
     int found; IMP imp = rt_lookup(start, sel, &found);
-    return found ? imp : (IMP)unrecognized_imp;
+    return found ? imp : super_missing(sup, start, sel);
 }
 IMP rt_lookup_super(struct objc_super *sup, SEL sel) {
     int found; IMP imp = rt_lookup(sup->cls, sel, &found);
-    return found ? imp : (IMP)unrecognized_imp;
+    return found ? imp : super_missing(sup, sup->cls, sel);
 }
 
 rt_bool rt_responds(id obj, SEL sel) {

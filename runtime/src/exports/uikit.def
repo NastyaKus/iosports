@@ -491,6 +491,7 @@ SYM(UIKit, _UIMenuControllerWillHideMenuNotification, &iosrt_UIMenuControllerWil
 SYM(UIKit, _UINibExternalObjects, &iosrt_UINibExternalObjects)
 SYM(UIKit, _UIPasteboardNameFind, &iosrt_UIPasteboardNameFind)
 SYM(UIKit, _UIPasteboardNameGeneral, &iosrt_UIPasteboardNameGeneral)
+SYM(UIKit, _UITableViewAutomaticDimension, &iosrt_UITableViewAutomaticDimension)
 SYM(UIKit, _UITextFieldTextDidChangeNotification, &iosrt_UITextFieldTextDidChangeNotification)
 SYM(UIKit, _UITextViewTextDidChangeNotification, &iosrt_UITextViewTextDidChangeNotification)
 SYM(UIKit, _UIViewNoIntrinsicMetric, &iosrt_UIViewNoIntrinsicMetric)

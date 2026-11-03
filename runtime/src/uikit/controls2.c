@@ -452,7 +452,10 @@ static void draw_tabbar(id view, struct cgctx *c, CGRect b) {
 static void tab_touchesEnded(id self, SEL s, id t, id e);
 
 /* =================================================== UINavigationController */
-struct uinav { struct uivc vc; id stack, bar, toolbar, delegate; long barHidden, toolbarHidden; };
+/* container: the view made by loadView (UIKit's UILayoutContainerView). It keeps
+   hosting the child views and bars even when an app replaces self.view and
+   re-parents the original view inside its own, as custom containers do. */
+struct uinav { struct uivc vc; id stack, bar, toolbar, delegate; long barHidden, toolbarHidden; id container; };
 #define NAV(x) ((struct uinav *)(x))
 static void nav_ensure(id self) {
     struct uinav *n = NAV(self);
@@ -464,19 +467,21 @@ static id nav_init(id self, SEL s) { (void)s; self = vc_initWithNib(self, NULL, 
 static id nav_initWithRoot(id self, SEL s, id root);
 static id nav_top(id self, SEL s) { (void)s; id st = NAV(self)->stack; return st && rt_array_count(st) ? rt_array_at(st, rt_array_count(st) - 1) : NULL; }
 static void nav_relayout(id self) {
-    struct uinav *n = NAV(self); struct uivc *c = VC(self);
-    if (!c->view) return;
-    CGRect b = rt_view_bounds(c->view);
+    struct uinav *n = NAV(self);
+    if (!n->container && VC(self)->view) n->container = objc_retain(VC(self)->view);   /* view came from elsewhere (NIB) */
+    id cv = n->container;
+    if (!cv) return;
+    CGRect b = rt_view_bounds(cv);
     id top = nav_top(self, NULL);
     /* only the top controller's view is installed */
     for (size_t i = 0; i < rt_array_count(n->stack); i++) {
         id vc = rt_array_at(n->stack, i), v = VC(vc)->view;
-        if (vc != top && v && V(v)->superview == c->view) rt_view_remove(v);
+        if (vc != top && v && V(v)->superview == cv) rt_view_remove(v);
     }
     if (top) {
         id tv = RT_SEND0(id, top, "view");
         rt_view_set_frame(tv, b); V(tv)->autoresizing = 2 | 16;
-        if (V(tv)->superview != c->view) RT_SEND2(void, c->view, "insertSubview:atIndex:", id, tv, long, 0);
+        if (V(tv)->superview != cv) RT_SEND2(void, cv, "insertSubview:atIndex:", id, tv, long, 0);
     }
     /* bar items mirror the stack */
     id items = mkarray();
@@ -484,17 +489,18 @@ static void nav_relayout(id self) {
     objc_release(BAR(n->bar)->items); BAR(n->bar)->items = items;
     rt_view_set_frame(n->bar, (CGRect){ { 0, 0 }, { b.size.width, 64 } });
     RT_SEND1(void, n->bar, "setHidden:", long, n->barHidden);
-    if (V(n->bar)->superview != c->view) rt_view_add_subview(c->view, n->bar);
+    if (V(n->bar)->superview != cv) rt_view_add_subview(cv, n->bar);
     rt_view_set_frame(n->toolbar, (CGRect){ { 0, b.size.height - 44 }, { b.size.width, 44 } });
     tb_setItems(n->toolbar, NULL, top ? VC(top)->toolbarItems : NULL);
     RT_SEND1(void, n->toolbar, "setHidden:", long, n->toolbarHidden);
-    if (V(n->toolbar)->superview != c->view) rt_view_add_subview(c->view, n->toolbar);
+    if (V(n->toolbar)->superview != cv) rt_view_add_subview(cv, n->toolbar);
     rt_ui_mark_dirty();
 }
 static void nav_loadView(id self, SEL s) {
     (void)s; nav_ensure(self);
+    /* like UIKit's container view: no background of its own, the content shows through */
     id v = rt_view_new(RT_CLASS(UIView), screen_bounds()); V(v)->autoresizing = 2 | 16;
-    RT_SEND1(void, v, "setBackgroundColor:", id, rt_color_make(1, 1, 1, 1));
+    objc_release(NAV(self)->container); NAV(self)->container = objc_retain(v);
     vc_setView(self, NULL, v); objc_release(v);
     nav_relayout(self);
 }
@@ -622,10 +628,11 @@ static void tab_touchesEnded(id self, SEL s, id t, id e) {
 }
 
 /* ================================================================ UITableView */
+const double iosrt_UITableViewAutomaticDimension = -1.0;
 struct uitable {
     struct uiscroll s; id dataSource, delegate; long style, sepStyle; double rowHeight, headerHeight, footerHeight; id sepColor;
     id header, footer, visible, reuse, registered, selected, bgView; long editing, allowsSelection, allowsMulti, loaded;
-    long nsect; long *nrows; double *rowY; double *rowH; long nflat; double *sectY;
+    long nsect; long *nrows; double *rowY; double *rowH; long nflat; double *sectY; double *hdrH, *ftrY, *ftrH; unsigned char *hasView; id secViews;
 };
 #define TB(x) ((struct uitable *)(x))
 struct uicell { struct uiview v; id reuseId, textLabel, detailLabel, imageView, contentView, accessoryView, bgView, selBgView; long style, accessory, selectionStyle, selected, highlighted, editingStyle; id indexPath; };
@@ -634,39 +641,83 @@ static id ip_make(long sec, long row) { return RT_SEND2(id, (id)rt_class_named("
 static long ip_section(id ip) { return RT_SEND0(long, ip, "section"); }
 static long ip_row(id ip) { return RT_SEND0(long, ip, "row"); }
 /* metrics: row y positions per section */
-static double section_header_h(id self, long sec) {
+static id section_title(id self, long sec, int footer) {
+    id ds = TB(self)->dataSource;
+    const char *sel = footer ? "tableView:titleForFooterInSection:" : "tableView:titleForHeaderInSection:";
+    return ds && rt_responds(ds, rt_sel(sel)) ? RT_SEND2(id, ds, sel, id, self, long, sec) : NULL;
+}
+static id section_view(id self, long sec, int footer) {
+    id d = TB(self)->delegate;
+    const char *sel = footer ? "tableView:viewForFooterInSection:" : "tableView:viewForHeaderInSection:";
+    return d && rt_responds(d, rt_sel(sel)) ? RT_SEND2(id, d, sel, id, self, long, sec) : NULL;
+}
+/* text block of a section header/footer title: 13pt, 15pt side insets */
+static double section_title_h(id self, id title, int footer) {
+    double w = rt_view_bounds(self).size.width - 30; if (w < 10) w = 10;
+    CGSize sz = rt_text_measure(rt_str_utf8(title), rt_font_make(13, 0, NULL), w, 0);
+    return footer ? ceil(sz.height) + 14 : (ceil(sz.height) + 15 > 28 ? ceil(sz.height) + 15 : 28);
+}
+static double section_hf_h(id self, long sec, int footer) {
     struct uitable *t = TB(self); id d = t->delegate;
-    if (d && rt_responds(d, rt_sel("tableView:heightForHeaderInSection:"))) return ((double (*)(id, SEL, id, long))objc_msgSend)(d, rt_sel("tableView:heightForHeaderInSection:"), self, sec);
-    id ds = t->dataSource;
-    if (ds && rt_responds(ds, rt_sel("tableView:titleForHeaderInSection:")) && RT_SEND2(id, ds, "tableView:titleForHeaderInSection:", id, self, long, sec)) return 28;
-    if (d && rt_responds(d, rt_sel("tableView:viewForHeaderInSection:"))) return t->headerHeight > 0 ? t->headerHeight : 28;
-    return t->style == 1 ? 18 : 0;
+    const char *hsel = footer ? "tableView:heightForFooterInSection:" : "tableView:heightForHeaderInSection:";
+    if (d && rt_responds(d, rt_sel(hsel))) {
+        double h = ((double (*)(id, SEL, id, long))objc_msgSend)(d, rt_sel(hsel), self, sec);
+        if (h >= 0) return h;   /* UITableViewAutomaticDimension (-1) falls through */
+    }
+    id v = section_view(self, sec, footer);
+    if (v) { double h = rt_view_frame(v).size.height; if (h > 0) return h; double def = footer ? t->footerHeight : t->headerHeight; return def > 0 ? def : 28; }
+    id title = section_title(self, sec, footer);
+    if (title && RT_SEND0(long, title, "length")) return section_title_h(self, title, footer);
+    double def = footer ? t->footerHeight : t->headerHeight;
+    if (def > 0) return def;
+    return t->style == 1 ? (footer ? 18 : 35) : 0;
+}
+static void install_section_views(id self) {
+    struct uitable *t = TB(self);
+    if (t->secViews) {
+        for (size_t i = 0; i < rt_array_count(t->secViews); i++) { id v = rt_array_at(t->secViews, i); if (V(v)->superview == self) rt_view_remove(v); }
+        RT_SEND0(void, t->secViews, "removeAllObjects");
+    } else t->secViews = mkarray();
+    double w = rt_view_bounds(self).size.width;
+    for (long sec = 0; sec < t->nsect; sec++)
+        for (int footer = 0; footer < 2; footer++) {
+            double y = footer ? t->ftrY[sec] : t->sectY[sec], h = footer ? t->ftrH[sec] : t->hdrH[sec];
+            if (h <= 0) continue;
+            id v = section_view(self, sec, footer);
+            if (!v) continue;
+            rt_view_set_frame(v, (CGRect){ { 0, y }, { w, h } });
+            rt_view_add_subview(self, v);
+            RT_SEND1(void, t->secViews, "addObject:", id, v);
+            t->hasView[sec * 2 + footer] = 1;
+        }
 }
 static void table_metrics(id self) {
     struct uitable *t = TB(self); id ds = t->dataSource, d = t->delegate;
-    free(t->nrows); free(t->rowY); free(t->rowH); free(t->sectY);
+    free(t->nrows); free(t->rowY); free(t->rowH); free(t->sectY); free(t->hdrH); free(t->ftrY); free(t->ftrH); free(t->hasView);
     t->nsect = ds && rt_responds(ds, rt_sel("numberOfSectionsInTableView:")) ? RT_SEND1(long, ds, "numberOfSectionsInTableView:", id, self) : 1;
     if (t->nsect < 0) t->nsect = 0;
     t->nrows = calloc((size_t)t->nsect + 1, sizeof(long)); t->sectY = calloc((size_t)t->nsect + 1, sizeof(double));
+    t->hdrH = calloc((size_t)t->nsect + 1, sizeof(double)); t->ftrY = calloc((size_t)t->nsect + 1, sizeof(double)); t->ftrH = calloc((size_t)t->nsect + 1, sizeof(double)); t->hasView = calloc((size_t)t->nsect * 2 + 1, 1);
     long total = 0;
     for (long sct = 0; sct < t->nsect; sct++) { t->nrows[sct] = ds ? RT_SEND2(long, ds, "tableView:numberOfRowsInSection:", id, self, long, sct) : 0; if (t->nrows[sct] < 0) t->nrows[sct] = 0; total += t->nrows[sct]; }
     t->nflat = total; t->rowY = calloc((size_t)total + 1, sizeof(double)); t->rowH = calloc((size_t)total + 1, sizeof(double));
     double y = t->header ? rt_view_frame(t->header).size.height : 0; long k = 0;
     int dyn = d && rt_responds(d, rt_sel("tableView:heightForRowAtIndexPath:"));
     for (long sct = 0; sct < t->nsect; sct++) {
-        t->sectY[sct] = y; y += section_header_h(self, sct);
+        t->sectY[sct] = y; t->hdrH[sct] = section_hf_h(self, sct, 0); y += t->hdrH[sct];
         for (long r = 0; r < t->nrows[sct]; r++, k++) {
             double h = dyn ? ((double (*)(id, SEL, id, id))objc_msgSend)(d, rt_sel("tableView:heightForRowAtIndexPath:"), self, ip_make(sct, r)) : t->rowHeight;
             if (h < 0) h = 44;
             t->rowY[k] = y; t->rowH[k] = h; y += h;
         }
-        if (d && rt_responds(d, rt_sel("tableView:heightForFooterInSection:"))) y += ((double (*)(id, SEL, id, long))objc_msgSend)(d, rt_sel("tableView:heightForFooterInSection:"), self, sct);
+        t->ftrY[sct] = y; t->ftrH[sct] = section_hf_h(self, sct, 1); y += t->ftrH[sct];
     }
     t->sectY[t->nsect] = y;
     if (t->footer) { CGRect f = rt_view_frame(t->footer); f.origin.y = y; f.size.width = rt_view_bounds(self).size.width; rt_view_set_frame(t->footer, f); if (V(t->footer)->superview != self) rt_view_add_subview(self, t->footer); y += f.size.height; }
     if (t->header) { CGRect f = rt_view_frame(t->header); f.origin = (CGPoint){ 0, 0 }; f.size.width = rt_view_bounds(self).size.width; rt_view_set_frame(t->header, f); if (V(t->header)->superview != self) rt_view_add_subview(self, t->header); }
     t->s.contentSize = (CGSize){ rt_view_bounds(self).size.width, y };
     t->loaded = 1;
+    install_section_views(self);
 }
 static long flat_index(id self, long sec, long row) { struct uitable *t = TB(self); long k = 0; for (long s2 = 0; s2 < sec && s2 < t->nsect; s2++) k += t->nrows[s2]; return k + row; }
 static id tv_initWithFrameStyle(id self, SEL s, CGRect fr, long style) {
@@ -686,6 +737,10 @@ static id tv_delegate2(id self, SEL s) { (void)s; return TB(self)->delegate; }
 static void tv_setDelegate2(id self, SEL s, id v) { (void)s; TB(self)->delegate = v; ((struct uiscroll *)self)->delegate = v; RT_SEND0(void, self, "setNeedsLayout"); }
 static double tv_rowHeight(id self, SEL s) { (void)s; return TB(self)->rowHeight; }
 static void tv_setRowHeight(id self, SEL s, double h) { (void)s; TB(self)->rowHeight = h; }
+static void tv_setSHH(id self, SEL s, double h) { (void)s; TB(self)->headerHeight = h; TB(self)->loaded = 0; RT_SEND0(void, self, "setNeedsLayout"); }
+static void tv_setSFH(id self, SEL s, double h) { (void)s; TB(self)->footerHeight = h; TB(self)->loaded = 0; RT_SEND0(void, self, "setNeedsLayout"); }
+static double tv_sHH(id self, SEL s) { (void)s; return TB(self)->headerHeight > 0 ? TB(self)->headerHeight : (TB(self)->style == 1 ? 35 : 28); }
+static double tv_sFH(id self, SEL s) { (void)s; return TB(self)->footerHeight > 0 ? TB(self)->footerHeight : (TB(self)->style == 1 ? 18 : 28); }
 static void tv_setSepStyle(id self, SEL s, long v) { (void)s; TB(self)->sepStyle = v; rt_ui_mark_dirty(); }
 static long tv_sepStyle(id self, SEL s) { (void)s; return TB(self)->sepStyle; }
 static void tv_setSepColor(id self, SEL s, id v) { (void)s; objc_retain(v); objc_release(TB(self)->sepColor); TB(self)->sepColor = v; }
@@ -693,7 +748,14 @@ static id tv_header(id self, SEL s) { (void)s; return TB(self)->header; }
 static void tv_setHeader(id self, SEL s, id v) { (void)s; if (TB(self)->header) rt_view_remove(TB(self)->header); objc_retain(v); objc_release(TB(self)->header); TB(self)->header = v; TB(self)->loaded = 0; RT_SEND0(void, self, "setNeedsLayout"); }
 static id tv_footer(id self, SEL s) { (void)s; return TB(self)->footer; }
 static void tv_setFooter(id self, SEL s, id v) { (void)s; if (TB(self)->footer) rt_view_remove(TB(self)->footer); objc_retain(v); objc_release(TB(self)->footer); TB(self)->footer = v; TB(self)->loaded = 0; RT_SEND0(void, self, "setNeedsLayout"); }
-static void tv_setBgView(id self, SEL s, id v) { (void)s; objc_retain(v); objc_release(TB(self)->bgView); TB(self)->bgView = v; }
+static void tv_setBgView(id self, SEL s, id v) {
+    (void)s; struct uitable *t = TB(self);
+    if (t->bgView == v) return;
+    if (t->bgView && V(t->bgView)->superview == self) rt_view_remove(t->bgView);
+    objc_retain(v); objc_release(t->bgView); t->bgView = v;
+    if (v) { rt_view_set_frame(v, rt_view_bounds(self)); RT_SEND2(void, self, "insertSubview:atIndex:", id, v, long, 0); }
+}
+static id tv_bgView(id self, SEL s) { (void)s; return TB(self)->bgView; }
 static void enqueue_cell(id self, id cell) {
     struct uitable *t = TB(self); id rid = CELL(cell)->reuseId;
     rt_view_remove(cell);
@@ -732,6 +794,7 @@ static void tv_layoutSubviews(id self, SEL s) {
     (void)s; struct uitable *t = TB(self);
     if (!t->loaded) table_metrics(self);
     CGRect b = rt_view_bounds(self);
+    if (t->bgView) rt_view_set_frame(t->bgView, b);   /* the background stays put while the content scrolls */
     double y0 = b.origin.y, y1 = b.origin.y + b.size.height;
     /* drop cells that scrolled out */
     for (size_t i = rt_array_count(t->visible); i-- > 0;) {
@@ -777,6 +840,7 @@ static CGRect tv_rectForRow(id self, SEL s, id ip) {
     if (k < 0 || k >= t->nflat) return (CGRect){ { 0, 0 }, { 0, 0 } };
     return (CGRect){ { 0, t->rowY[k] }, { rt_view_bounds(self).size.width, t->rowH[k] } };
 }
+static long tv_style(id self, SEL s) { (void)s; return TB(self)->style; }
 static long tv_numSections(id self, SEL s) { (void)s; if (!TB(self)->loaded) table_metrics(self); return TB(self)->nsect; }
 static long tv_numRows(id self, SEL s, long sec) { (void)s; if (!TB(self)->loaded) table_metrics(self); return sec >= 0 && sec < TB(self)->nsect ? TB(self)->nrows[sec] : 0; }
 static void tv_scrollToRow(id self, SEL s, id ip, long pos, long a) {
@@ -819,15 +883,22 @@ static void draw_table(id view, struct cgctx *c, CGRect b) {
     struct uitable *t = TB(view);
     if (!t->loaded) return;
     id ds = t->dataSource; (void)b;
-    for (long sec = 0; sec < t->nsect; sec++) {
-        if (ds && rt_responds(ds, rt_sel("tableView:titleForHeaderInSection:"))) {
-            id title = RT_SEND2(id, ds, "tableView:titleForHeaderInSection:", id, view, long, sec);
-            if (title) {
-                float col[4] = { 0.43f, 0.43f, 0.45f, 1 };
-                rt_text_draw(c, rt_str_utf8(title), rt_font_make(13, 0, NULL), col, (CGRect){ { 15, t->sectY[sec] }, { rt_view_bounds(view).size.width - 30, 28 } }, 0, 1, 1);
-            }
+    (void)ds;
+    double w = rt_view_bounds(view).size.width - 30;
+    float col[4] = { 0.43f, 0.43f, 0.45f, 1 };
+    for (long sec = 0; sec < t->nsect; sec++)
+        for (int footer = 0; footer < 2; footer++) {
+            double y = footer ? t->ftrY[sec] : t->sectY[sec], h = footer ? t->ftrH[sec] : t->hdrH[sec];
+            if (h <= 0 || t->hasView[sec * 2 + footer]) continue;   /* a custom view replaces the title */
+            id title = section_title(view, sec, footer);
+            if (!title) continue;
+            const char *u = rt_str_utf8(title);
+            id font = rt_font_make(13, 0, NULL);
+            CGSize sz = rt_text_measure(u, font, w, 0);
+            /* headers sit on the bottom edge of their slot, footers hang from the top */
+            double ty = footer ? y + 7 : y + h - ceil(sz.height) - 7;
+            rt_text_draw(c, u, font, col, (CGRect){ { 15, ty }, { w, ceil(sz.height) + 1 } }, 0, 0, 0);
         }
-    }
     if (t->sepStyle) {
         iosrt_CGContextSetFillColorWithColor(c, t->sepColor ? t->sepColor : rt_color_make(0.78, 0.78, 0.8, 1));
         for (long k = 0; k < t->nflat; k++) iosrt_CGContextFillRect(c, (CGRect){ { 15, t->rowY[k] + t->rowH[k] - 0.5 }, { rt_view_bounds(view).size.width - 15, 0.5 } });
@@ -913,6 +984,49 @@ static void draw_cell(id view, struct cgctx *c, CGRect b) {
         rt_text_draw(c, g, rt_font_make(x->accessory == 3 ? 17 : 24, 0, NULL), col, (CGRect){ { b.origin.x + b.size.width - 33, b.origin.y }, { 20, b.size.height } }, 1, 1, 1);
     }
 }
+
+/* ===================================================== UITableViewController */
+struct uitvc { struct uivc vc; id table; long style, clearsSelection; id refresh; };
+#define TVC(x) ((struct uitvc *)(x))
+static id tvc_initWithStyle(id self, SEL s, long style) {
+    (void)s; self = RT_SEND2(id, self, "initWithNibName:bundle:", id, NULL, id, NULL);
+    if (self) { TVC(self)->style = style; TVC(self)->clearsSelection = 1; }
+    return self;
+}
+static id tvc_init(id self, SEL s) { return tvc_initWithStyle(self, s, 0); }
+static id tvc_initWithNib(id self, SEL s, id nib, id bundle) { self = vc_initWithNib(self, s, nib, bundle); TVC(self)->clearsSelection = 1; return self; }
+static void tvc_setTable(id self, SEL s, id t) {
+    (void)s; struct uitvc *x = TVC(self);
+    objc_retain(t); objc_release(x->table); x->table = t;
+    if (t) {
+        if (!TB(t)->dataSource) RT_SEND1(void, t, "setDataSource:", id, self);
+        if (!TB(t)->delegate) RT_SEND1(void, t, "setDelegate:", id, self);
+    }
+}
+static void tvc_loadView(id self, SEL s) {
+    struct uivc *c = VC(self); struct uitvc *x = TVC(self);
+    if (c->nibName) vc_loadView(self, s);   /* the NIB may hold the table (or a plain view) */
+    if (c->view && rt_is_kind_of(c->view, RT_CLASS(UITableView))) { if (!x->table) tvc_setTable(self, NULL, c->view); return; }
+    if (c->view) return;
+    id t = RT_SEND2(id, rt_alloc_instance(RT_CLASS(UITableView), 0), "initWithFrame:style:", CGRect, screen_bounds(), long, x->style);
+    V(t)->autoresizing = 2 | 16;
+    tvc_setTable(self, NULL, t);
+    vc_setView(self, NULL, t);
+    objc_release(t);
+}
+static id tvc_table(id self, SEL s) { (void)s; rt_vc_load_view(self); return TVC(self)->table; }
+static void tvc_setView(id self, SEL s, id v) { vc_setView(self, s, v); if (v && rt_is_kind_of(v, RT_CLASS(UITableView))) tvc_setTable(self, NULL, v); }
+static void tvc_viewWillAppear(id self, SEL s, long a) {
+    (void)s; (void)a; struct uitvc *x = TVC(self);
+    if (x->table && x->clearsSelection) { id ip = TB(x->table)->selected; if (ip) RT_SEND2(void, x->table, "deselectRowAtIndexPath:animated:", id, ip, long, 0); }
+}
+static rt_bool tvc_clears(id self, SEL s) { (void)s; return TVC(self)->clearsSelection != 0; }
+static void tvc_setClears(id self, SEL s, long v) { (void)s; TVC(self)->clearsSelection = v & 0xff; }
+static id tvc_refresh(id self, SEL s) { (void)s; return TVC(self)->refresh; }
+static void tvc_setRefresh(id self, SEL s, id v) { (void)s; objc_retain(v); objc_release(TVC(self)->refresh); TVC(self)->refresh = v; }
+static long tvc_sections(id self, SEL s, id t) { (void)self; (void)s; (void)t; return 1; }
+static long tvc_rows(id self, SEL s, id t, long sec) { (void)self; (void)s; (void)t; (void)sec; return 0; }
+static void tvc_dealloc(id self, SEL s) { objc_release(TVC(self)->table); objc_release(TVC(self)->refresh); vc_dealloc(self, s); }
 
 /* ========================================================== alerts & sheets */
 struct uialert { Class isa; id title, message, delegate, buttons, window, fields; long cancel, firstOther, destructive, style, tag, visible, sheet; id controller; };
@@ -1359,12 +1473,12 @@ void rt_controls2_init(void) {
     IM(tv, "rowHeight", tv_rowHeight); IM(tv, "setRowHeight:", tv_setRowHeight); IM(tv, "setEstimatedRowHeight:", nopL);
     IM(tv, "separatorStyle", tv_sepStyle); IM(tv, "setSeparatorStyle:", tv_setSepStyle); IM(tv, "setSeparatorColor:", tv_setSepColor);
     IM(tv, "tableHeaderView", tv_header); IM(tv, "setTableHeaderView:", tv_setHeader); IM(tv, "tableFooterView", tv_footer); IM(tv, "setTableFooterView:", tv_setFooter);
-    IM(tv, "setBackgroundView:", tv_setBgView); IM(tv, "dequeueReusableCellWithIdentifier:", tv_dequeue);
+    IM(tv, "setBackgroundView:", tv_setBgView); IM(tv, "backgroundView", tv_bgView); IM(tv, "dequeueReusableCellWithIdentifier:", tv_dequeue);
     IM(tv, "dequeueReusableCellWithIdentifier:forIndexPath:", tv_dequeueIP); IM(tv, "registerClass:forCellReuseIdentifier:", tv_registerClass);
     IM(tv, "registerNib:forCellReuseIdentifier:", tv_registerNib); IM(tv, "reloadData", tv_reloadData); IM(tv, "layoutSubviews", tv_layoutSubviews);
     IM(tv, "cellForRowAtIndexPath:", tv_cellForRow); IM(tv, "visibleCells", tv_visibleCells); IM(tv, "indexPathsForVisibleRows", tv_visibleIPs);
     IM(tv, "indexPathForCell:", tv_ipForCell); IM(tv, "indexPathForRowAtPoint:", tv_ipForPoint); IM(tv, "rectForRowAtIndexPath:", tv_rectForRow);
-    IM(tv, "numberOfSections", tv_numSections); IM(tv, "numberOfRowsInSection:", tv_numRows);
+    IM(tv, "numberOfSections", tv_numSections); IM(tv, "style", tv_style); IM(tv, "numberOfRowsInSection:", tv_numRows);
     IM(tv, "scrollToRowAtIndexPath:atScrollPosition:animated:", tv_scrollToRow);
     IM(tv, "selectRowAtIndexPath:animated:scrollPosition:", tv_select); IM(tv, "deselectRowAtIndexPath:animated:", tv_deselect);
     IM(tv, "indexPathForSelectedRow", tv_selectedIP);
@@ -1374,8 +1488,8 @@ void rt_controls2_init(void) {
     IM(tv, "beginUpdates", tv_beginUpdates); IM(tv, "endUpdates", tv_endUpdates);
     IM(tv, "setEditing:animated:", tv_setEditing); IM(tv, "setEditing:", tv_setEditing1); IM(tv, "isEditing", tv_isEditing);
     IM(tv, "setAllowsSelection:", tv_setAllowsSelection); IM(tv, "setAllowsSelectionDuringEditing:", nopL); IM(tv, "setAllowsMultipleSelection:", nopL);
-    IM(tv, "touchesEnded:withEvent:", tv_touchesEnded); IM(tv, "setSeparatorInset:", nop1); IM(tv, "setSectionHeaderHeight:", nopL);
-    IM(tv, "setSectionFooterHeight:", nopL); IM(tv, "setSectionIndexColor:", nop1); IM(tv, "setCellLayoutMarginsFollowReadableWidth:", nopL);
+    IM(tv, "touchesEnded:withEvent:", tv_touchesEnded); IM(tv, "setSeparatorInset:", nop1); IM(tv, "setSectionHeaderHeight:", tv_setSHH); IM(tv, "sectionHeaderHeight", tv_sHH);
+    IM(tv, "setSectionFooterHeight:", tv_setSFH); IM(tv, "sectionFooterHeight", tv_sFH); IM(tv, "setSectionIndexColor:", nop1); IM(tv, "setCellLayoutMarginsFollowReadableWidth:", nopL);
     NEWCLASS(UITableViewCell, v, sizeof(struct uicell) - sizeof(struct uiview));
     Class cl = RT_CLASS(UITableViewCell);
     IM(cl, "initWithStyle:reuseIdentifier:", cell_initStyle); IM(cl, "initWithFrame:", cell_initWithFrame); IM(cl, "initWithCoder:", cell_initWithCoder);
@@ -1388,7 +1502,13 @@ void rt_controls2_init(void) {
     IM(cl, "backgroundView", cell_bgView); IM(cl, "setBackgroundView:", cell_setBgView); IM(cl, "setSelectedBackgroundView:", cell_setSelBgView);
     IM(cl, "prepareForReuse", nop); IM(cl, "setEditingAccessoryType:", nopL); IM(cl, "setShowsReorderControl:", nopL); IM(cl, "setIndentationLevel:", nopL);
     IM(cl, "setSeparatorInset:", nop1);
-    NEWCLASS(UITableViewController, vc, 0);
+    NEWCLASS(UITableViewController, vc, sizeof(struct uitvc) - sizeof(struct uivc));
+    Class tvc = RT_CLASS(UITableViewController);
+    IM(tvc, "initWithStyle:", tvc_initWithStyle); IM(tvc, "init", tvc_init); IM(tvc, "initWithNibName:bundle:", tvc_initWithNib);
+    IM(tvc, "loadView", tvc_loadView); IM(tvc, "tableView", tvc_table); IM(tvc, "setTableView:", tvc_setTable); IM(tvc, "setView:", tvc_setView);
+    IM(tvc, "viewWillAppear:", tvc_viewWillAppear); IM(tvc, "clearsSelectionOnViewWillAppear", tvc_clears);
+    IM(tvc, "setClearsSelectionOnViewWillAppear:", tvc_setClears); IM(tvc, "refreshControl", tvc_refresh); IM(tvc, "setRefreshControl:", tvc_setRefresh);
+    IM(tvc, "numberOfSectionsInTableView:", tvc_sections); IM(tvc, "tableView:numberOfRowsInSection:", tvc_rows); IM(tvc, "dealloc", tvc_dealloc);
 
     rt_native_class(RT_CLASS(UIAlertView), &iosrt_meta_UIAlertView, "UIAlertView", o, sizeof(struct uialert) - sizeof(void *));
     rt_native_class(RT_CLASS(UIActionSheet), &iosrt_meta_UIActionSheet, "UIActionSheet", o, sizeof(struct uialert) - sizeof(void *));

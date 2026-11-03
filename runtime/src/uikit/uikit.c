@@ -67,7 +67,7 @@ void iosrt_push_touch_id(int tid, int phase, float x, float y) {
 }
 void iosrt_push_touch(int phase, float x, float y) { iosrt_push_touch_id(0, phase, x, y); }
 /* touches given in pixels of the presented frame */
-void iosrt_push_touch_px(int tid, int phase, float x, float y) { iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale); }
+void rt_push_touch_px(int tid, int phase, float x, float y) { iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale); }
 void iosrt_request_quit(void) { rt_quit_requested = 1; }
 static volatile int dirty = 1;
 void rt_ui_mark_dirty(void) { dirty = 1; }
@@ -1209,6 +1209,19 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
         if (max_frames) usleep(1000);
     }
     if (max_frames && last_dump && !getenv("IOSRT_DUMP_FRAMES")) rt_out(1, last_dump, strlen(last_dump));
+    /* debugging aid: IOSRT_DUMP_CLASS=A,B lists the methods each class implements itself */
+    if (getenv("IOSRT_DUMP_CLASS")) {
+        extern void **class_copyMethodList(Class c, unsigned *out); extern SEL method_getName(void *m);
+        char buf[512]; snprintf(buf, sizeof buf, "%s", getenv("IOSRT_DUMP_CLASS"));
+        for (char *save = NULL, *nm = strtok_r(buf, ",", &save); nm; nm = strtok_r(NULL, ",", &save)) {
+            Class c = rt_class_named(nm);
+            for (int meta = 0; c && meta < 2; meta++) {
+                unsigned n = 0; void **ms = class_copyMethodList(meta ? c->isa : c, &n);
+                for (unsigned i = 0; i < n; i++) { char line[300]; int k = snprintf(line, sizeof line, "%c[%s %s]\n", meta ? '+' : '-', nm, (const char *)method_getName(ms[i])); rt_out(2, line, (size_t)k); }
+                free(ms);
+            }
+        }
+    }
     if (getenv("IOSRT_DUMP_VIEWS")) {
         struct uiapp *a = (struct uiapp *)app;
         for (size_t i = 0; i < rt_array_count(a->windows); i++) dump_view(rt_array_at(a->windows, i), 0);

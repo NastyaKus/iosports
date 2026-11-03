@@ -326,6 +326,11 @@ __attribute__((objc_root_class))
 - (void)postNotificationName:(NSString *)n object:(id)obj userInfo:(NSDictionary *)u;
 - (void)removeObserver:(id)o;
 @end
+@interface NSIndexPath : NSObject <NSCopying>
++ (instancetype)indexPathWithIndex:(NSUInteger)index;
+@property (readonly) NSUInteger length;
+- (NSUInteger)indexAtPosition:(NSUInteger)position;
+@end
 @interface NSAutoreleasePool : NSObject
 - (void)drain;
 @end
