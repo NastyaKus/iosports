@@ -1056,7 +1056,7 @@ static void deliver_touch(struct touch_ev *e) {
 /* ========================================================= app main loop */
 int rt_controls_continuous(void);
 static Class find_delegate_class(void);
-/* scripted input for headless tests: IOSRT_SCRIPT="5:tap:100,200;9:quit" (also down/move/up/drag:x,y,x2,y2) */
+/* scripted input for headless tests: IOSRT_SCRIPT="5:tap:100,200;9:quit" (also down/move/up/drag:x,y,x2,y2, wait:ms) */
 static void run_script(unsigned frame) {
     const char *s = getenv("IOSRT_SCRIPT");
     if (!s) return;
@@ -1071,6 +1071,7 @@ static void run_script(unsigned frame) {
         else if (!strcmp(cmd, "up")) iosrt_push_touch(2, x, y);
         else if (!strcmp(cmd, "drag")) { iosrt_push_touch(0, x, y); for (int i = 1; i <= 8; i++) iosrt_push_touch(1, x + (x2 - x) * i / 8, y + (y2 - y) * i / 8); iosrt_push_touch(2, x2, y2); }
         else if (!strcmp(cmd, "quit")) rt_quit_requested = 1;
+        else if (!strcmp(cmd, "wait")) usleep((useconds_t)(x * 1000));   /* N:wait:ms - real time passes (long presses, timers) */
     }
     free(dup);
 }

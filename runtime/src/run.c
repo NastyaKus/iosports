@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <ucontext.h>
+#include <dirent.h>
 
 void rt_libsystem_init(void);
 void rt_traps_seal(void);
@@ -297,6 +298,52 @@ int iosrt_run(const char *path, const struct rt_run_opts *o) {
 }
 
 /* ------------------------------------------------- compatibility report */
+/* what the app bundle itself tells about compatibility, plus a plain-language verdict */
+static int dir_has(const char *dir, const char *prefix, const char *suffix, char *first, size_t cap) {
+    DIR *d = opendir(dir); struct dirent *e; int n = 0;
+    while (d && (e = readdir(d))) {
+        size_t l = strlen(e->d_name), sl = suffix ? strlen(suffix) : 0;
+        if (e->d_name[0] == '.') continue;
+        if (prefix && strncmp(e->d_name, prefix, strlen(prefix))) continue;
+        if (suffix && (l < sl || strcmp(e->d_name + l - sl, suffix))) continue;
+        if (!n && first) snprintf(first, cap, "%s", e->d_name);
+        n++;
+    }
+    if (d) closedir(d);
+    return n;
+}
+static int missing_in(struct rt_image *img, const char *lib) { int n = 0; for (int i = 0; i < img->nmissing; i++) if (!strcmp(img->missing[i].lib, lib)) n++; return n; }
+static void report_bundle(rt_sb *sb, const char *path, struct rt_image *img) {
+    struct stat st;
+    int is_app = stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    int blockers = 0;
+    rt_sb_puts(sb, "verdict:\n");
+    #define BLOCK(...) do { rt_sb_puts(sb, "  BLOCKER: "); rt_sb_printf(sb, __VA_ARGS__); rt_sb_puts(sb, "\n"); blockers++; } while (0)
+    #define LIMIT(...) do { rt_sb_puts(sb, "  limited: "); rt_sb_printf(sb, __VA_ARGS__); rt_sb_puts(sb, "\n"); } while (0)
+    if (is_app) {
+        char dir[4200], first[256] = "";
+        snprintf(dir, sizeof dir, "%s/Frameworks", path);
+        if (dir_has(dir, "libswift", ".dylib", NULL, 0)) BLOCK("written in Swift (Frameworks/libswift*.dylib): the Swift runtime is not supported yet");
+        int fw = dir_has(dir, NULL, ".framework", first, sizeof first) + dir_has(dir, NULL, ".dylib", NULL, 0) - dir_has(dir, "libswift", ".dylib", NULL, 0);
+        if (fw > 0) BLOCK("embeds %d framework(s)/dylib(s) (e.g. %s): dynamic libraries are not loaded yet", fw, first[0] ? first : "a dylib");
+        snprintf(dir, sizeof dir, "%s/PlugIns", path);
+        if (dir_has(dir, NULL, ".appex", NULL, 0)) LIMIT("app extensions (widgets etc.) are ignored");
+    }
+    int gl = missing_in(img, "OpenGLES"), gk = missing_in(img, "GameKit"), cd = missing_in(img, "CoreData"), mk = missing_in(img, "MapKit");
+    if (gl) BLOCK("draws with OpenGL ES (%d missing symbols): not implemented yet", gl);
+    if (missing_in(img, "Metal") || missing_in(img, "MetalKit")) BLOCK("draws with Metal: not implemented");
+    if (missing_in(img, "SpriteKit") || missing_in(img, "SceneKit")) BLOCK("uses SpriteKit/SceneKit: not implemented");
+    if (cd) BLOCK("stores data with Core Data (%d missing symbols): not implemented yet", cd);
+    if (mk) LIMIT("maps (MapKit) are not available");
+    if (gk) LIMIT("Game Center (GameKit) is not available");
+    if (missing_in(img, "libsqlite3")) LIMIT("uses sqlite3 directly: not available yet");
+    if (missing_in(img, "CoreLocation")) LIMIT("location services are not available");
+    if (missing_in(img, "StoreKit")) LIMIT("in-app purchases are not available");
+    if (missing_in(img, "AVFoundation") || missing_in(img, "AudioToolbox")) LIMIT("some audio APIs are missing: sound may be silent");
+    if (!blockers) rt_sb_printf(sb, "  no known blockers: %d missing symbols return 0/nil when called\n", img->nmissing);
+    #undef BLOCK
+    #undef LIMIT
+}
 static int cmp_missing(const void *a, const void *b) {
     const struct rt_missing *x = a, *y = b;
     int c = strcmp(x->lib, y->lib);
@@ -331,6 +378,7 @@ char *iosrt_report(const char *path) {
         rt_sb_printf(&sb, "  %-22s %d\n", img->missing[i].lib, j - i);
         i = j;
     }
+    report_bundle(&sb, path, img);
     rt_sb_puts(&sb, "missing symbols:\n");
     static const char *kinds[] = { "func", "data", "class" };
     for (int i = 0; i < img->nmissing; i++)
