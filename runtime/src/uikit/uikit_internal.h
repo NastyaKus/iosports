@@ -136,6 +136,8 @@ struct uiwindow { struct uiview v; id root; double level; long hiddenWin; };
 struct uivc {
     Class isa; id view; id title; long loaded; id nibName, nibBundle; id parent, children, presented, presenting, navItem, tabBarItem;
     long modalStyle, transitionStyle, appeared, hidesBottomBar, edges, extendedLayout; id toolbarItems; id restorationIdentifier; CGSize preferredContentSize;
+    /* storyboard scenes: the storyboard, segue templates, external objects for the view nib, objects kept alive */
+    id storyboard, segueTemplates, viewExternals, keepAlive, sbIdentifier;
 };
 struct uiapp { Class isa; id delegate; id keyWindow; id windows; long idle, badge, statusBarHidden, ignoring, statusBarStyle; };
 struct uitouch { Class isa; CGPoint pt, prev; id view, window; long phase; double ts; long tapCount; id gestures; long tid; };
@@ -162,6 +164,13 @@ void rt_controls_init(void);
 void rt_control_draw(id view, struct cgctx *c, CGRect b);   /* draws built-in control content; returns quietly for others */
 void rt_vc_load_view(id vc);
 void rt_vc_appear(id vc, int appear);
+/* storyboard.c */
+const char *rt_storyboard_dir(id storyboard);
+void rt_segue_template_set_source(id tmpl, id vc);
+int rt_segue_template_is_embed(id tmpl);
+id rt_segue_template_identifier(id tmpl);
+int rt_segue_template_perform(id tmpl, id sender);
+void rt_soft_error(const char *msg);
 /* nib.c */
 void rt_nib_init(void);
 id rt_nib_instantiate(const char *path, id owner, id external);   /* autoreleased top-level array or nil */

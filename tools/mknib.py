@@ -10,7 +10,8 @@ runtime's NIB loader can be tested without Interface Builder files.
     nib.write("Main.nib", top=[owner, view])
 
 Usage as a script builds the nib used by samples/nib_demo: mknib.py out.nib;
-mknib.py --main-window MainWindow.nib builds the keyed nib of samples/keyed_nib_demo.
+mknib.py --main-window MainWindow.nib builds the keyed nib of samples/keyed_nib_demo;
+mknib.py --storyboard Main.storyboardc builds the storyboard of samples/storyboard_demo.
 """
 import struct, sys
 
@@ -186,6 +187,82 @@ def main_window_nib(path):
     nib.action(button, "pressed:", ctl)
     nib.write_keyed(path, top=[owner, ctl, window])
 
+def storyboard_demo(path):
+    """Main.storyboardc for samples/storyboard_demo, laid out like ibtool's output:
+    scene nibs whose File's Owner receives the controller through
+    "sceneViewController", the storyboard as the "UIStoryboardPlaceholder"
+    external object, lazily loaded view nibs (UINibName) with external objects
+    for segue templates, a show segue triggered by a button and an embed segue
+    into a container view."""
+    import os, plistlib
+    os.makedirs(path, exist_ok=True)
+    def scene(nibname, build):
+        nib = Nib()
+        owner = nib.proxy("IBFilesOwner")
+        sbp = nib.proxy("UIStoryboardPlaceholder")
+        vc = build(nib, sbp)
+        nib.outlet(owner, "sceneViewController", vc)
+        nib.write(os.path.join(path, nibname + ".nib"), top=[owner, vc])
+    def vc_obj(nib, cls, base, extra=()):
+        return nib.obj("UIClassSwapper", list(extra) + [("UIClassName", nib.string(cls)), ("UIOriginalClassName", nib.string(base))])
+    # navigation controller scene with the list controller as its root
+    def nav_scene(nib, sbp):
+        push = nib.obj("UIStoryboardShowSegueTemplate", [("UIIdentifier", nib.string("showDetail")),
+                       ("UIDestinationViewControllerIdentifier", nib.string("DetailController"))])
+        embed = nib.obj("UIStoryboardEmbedSegueTemplate", [("UIIdentifier", nib.string("embedBadge")),
+                        ("UIDestinationViewControllerIdentifier", nib.string("BadgeController")), ("UIPerformOnViewLoad", True), ("UIContainerView", None)])
+        item = nib.obj("UINavigationItem", [("UITitle", nib.string("List"))])
+        lst = vc_obj(nib, "ListController", "UIViewController", [
+            ("UINibName", nib.string("list-view")), ("UINavigationItem", item),
+            ("UIStoryboardSegueTemplates", nib.array([push, embed], mutable=False)),
+            ("UIExternalObjectsTableForViewLoading", nib.dictionary([(nib.string("UpstreamPlaceholder-push"), push), (nib.string("UpstreamPlaceholder-embed"), embed)]))])
+        nav = nib.obj("UINavigationController", [("UIViewControllers", nib.array([lst])), ("UINavigationBarHidden", False)])
+        nib.outlet(nav, "storyboard", sbp)
+        nib.outlet(lst, "storyboard", sbp)
+        return nav
+    scene("UINavigationController-nav", nav_scene)
+    # the list controller's view: a button triggering the show segue, a container for the embed
+    nib = Nib()
+    owner = nib.proxy("IBFilesOwner")
+    pushp, embedp = nib.proxy("UpstreamPlaceholder-push"), nib.proxy("UpstreamPlaceholder-embed")
+    content = nib.obj("UIButtonContent", [("UITitle", nib.string("Open detail")), ("UITitleColor", nib.color(1, 1, 1))])
+    button = nib.view("UIButton", (20, 200, 200, 44), bg=(0.2, 0.4, 0.9), extra=[("UIButtonType", 0), ("UIButtonStatefulContent", nib.dictionary([(nib.number(0), content)]))])
+    container = nib.view("UIView", (20, 300, 120, 80), bg=(0.9, 0.9, 0.9))
+    root = nib.view("UIView", (0, 0, 375, 667), bg=(1, 1, 1), mask=18, subviews=[button, container])
+    nib.outlet(owner, "view", root)
+    nib.action(button, "perform:", pushp)
+    nib.outlet(embedp, "containerView", container)
+    nib.write(os.path.join(path, "list-view.nib"), top=[owner, root])
+    # detail scene and its view
+    def detail_scene(nib, sbp):
+        vc = vc_obj(nib, "DetailController", "UIViewController", [("UINibName", nib.string("detail-view")), ("UIStoryboardIdentifier", nib.string("DetailController"))])
+        nib.outlet(vc, "storyboard", sbp)
+        return vc
+    scene("DetailController", detail_scene)
+    nib = Nib()
+    owner = nib.proxy("IBFilesOwner")
+    label = nib.view("UILabel", (20, 100, 300, 40), extra=[("UIText", nib.string("Detail from the storyboard")), ("UITextColor", nib.color(0, 0, 0))])
+    root = nib.view("UIView", (0, 0, 375, 667), bg=(0.95, 0.95, 0.8), mask=18, subviews=[label])
+    nib.outlet(owner, "view", root)
+    nib.outlet(owner, "label", label)
+    nib.write(os.path.join(path, "detail-view.nib"), top=[owner, root])
+    # the embedded badge
+    def badge_scene(nib, sbp):
+        vc = vc_obj(nib, "BadgeController", "UIViewController", [("UINibName", nib.string("badge-view"))])
+        nib.outlet(vc, "storyboard", sbp)
+        return vc
+    scene("BadgeController", badge_scene)
+    nib = Nib()
+    owner = nib.proxy("IBFilesOwner")
+    root = nib.view("UIView", (0, 0, 120, 80), bg=(0.9, 0.3, 0.3), mask=18)
+    nib.outlet(owner, "view", root)
+    nib.write(os.path.join(path, "badge-view.nib"), top=[owner, root])
+    with open(os.path.join(path, "Info.plist"), "wb") as f:
+        plistlib.dump({"UIStoryboardDesignatedEntryPointIdentifier": "UINavigationController-nav", "UIStoryboardVersion": 1,
+                       "UIViewControllerIdentifiersToNibNames": {"UINavigationController-nav": "UINavigationController-nav",
+                                                                 "DetailController": "DetailController", "BadgeController": "BadgeController"}},
+                      f, fmt=plistlib.FMT_BINARY)
+
 def demo_nib(path):
     nib = Nib()
     owner = nib.proxy("IBFilesOwner")
@@ -206,5 +283,7 @@ def demo_nib(path):
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--main-window":
         main_window_nib(sys.argv[2])
+    elif len(sys.argv) > 2 and sys.argv[1] == "--storyboard":
+        storyboard_demo(sys.argv[2])
     else:
         demo_nib(sys.argv[1] if len(sys.argv) > 1 else "Main.nib")

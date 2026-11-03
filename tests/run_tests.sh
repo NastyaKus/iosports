@@ -47,6 +47,15 @@ cat > "$S/KeyedNib.app/Info.plist" <<PL
 <plist version="1.0"><dict><key>CFBundleExecutable</key><string>KeyedNib</string>
 <key>CFBundleIdentifier</key><string>org.iosrt.keyednib</string><key>NSMainNibFile</key><string>MainWindow</string></dict></plist>
 PL
+rm -rf "$S/Storyboard.app"; mkdir -p "$S/Storyboard.app"
+app "$S/Storyboard.app/Storyboard" 12.0 "$root/samples/storyboard_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tools/mknib.py" --storyboard "$S/Storyboard.app/Main.storyboardc"
+cat > "$S/Storyboard.app/Info.plist" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Storyboard</string>
+<key>CFBundleIdentifier</key><string>org.iosrt.storyboard</string><key>UIMainStoryboardFile</key><string>Main</string>
+<key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
+PL
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -113,6 +122,10 @@ for flavor in linux-aarch64 android-arm64; do
   IOSRT_HEADLESS_FRAMES=8 IOSRT_SCRIPT="4:tap:160,222;6:tap:160,222" $R "$S/KeyedNib.app" >"$T/out.txt" 2>&1; rc=$?
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/keyed_nib_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "keyed_nib_demo (NSMainNibFile, keyed-archive nib, delegate from the nib)"; else ko "keyed_nib_demo rc=$rc" "$T/diff.txt"; fi
+  # 3h. storyboards: UIMainStoryboardFile, scenes, lazily loaded views, embed and show segues
+  IOSRT_HEADLESS_FRAMES=10 IOSRT_SCRIPT="4:tap:120,222" $R "$S/Storyboard.app" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/storyboard_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "storyboard_demo (main storyboard, scenes, embed/show segues, prepareForSegue)"; else ko "storyboard_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?

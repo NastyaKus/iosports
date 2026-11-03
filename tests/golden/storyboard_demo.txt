@@ -1,0 +1,7 @@
+launch: window made by UIKit 1, root UINavigationController with top ListController
+instantiated by identifier: DetailController
+prepareForSegue 'embedBadge': ListController -> BadgeController (sender ListController)
+badge viewDidLoad: frame {{0, 0}, {120, 80}}
+list viewDidLoad: title 'List', 1 child (BadgeController) in container {{20, 300}, {120, 80}}
+prepareForSegue 'showDetail': ListController -> DetailController (sender UIButton)
+detail viewDidLoad: label 'Detail from the storyboard', item 'Row 1', has storyboard 1, nav stack 2
