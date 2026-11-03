@@ -1,0 +1,12 @@
+# never commit third-party app packages or binaries
+*.ipa
+*.apk
+*.aab
+build/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/.cxx/
+*.o
+__pycache__/
