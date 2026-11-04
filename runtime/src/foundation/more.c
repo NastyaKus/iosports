@@ -535,6 +535,8 @@ static id u_fileURL(Class c, SEL s, id path) { (void)s; if (!path) return NULL; 
 static id u_fileURLDir(Class c, SEL s, id path, long isdir) { (void)isdir; return u_fileURL(c, s, path); }
 static id u_initWithString(id self, SEL s, id str) { (void)s; struct nsurl *u = (struct nsurl *)self; if (!str) { objc_release(self); return NULL; } u->str = objc_retain(RT_SEND0(id, str, "copy")); objc_release(u->str); u->file = !strncmp(rt_str_utf8(str), "file://", 7); return self; }
 static id u_initFileURL(id self, SEL s, id path) { Class c = self->isa; (void)s; rt_dealloc_instance(self); return path ? url_make(c, rt_str_utf8(path), 1) : NULL; }
+static id u_initFileURLDir(id self, SEL s, id path, long isdir) { (void)isdir; return u_initFileURL(self, s, path); }
+static id u_initWithStringRel(id self, SEL s, id str, id base) { (void)s; Class c = self->isa; rt_dealloc_instance(self); return objc_retain(u_withStringRel(c, rt_sel("URLWithString:relativeToURL:"), str, base)); }
 static void u_dealloc(id self, SEL s) { (void)s; objc_release(((struct nsurl *)self)->str); rt_dealloc_instance(self); }
 static id u_absoluteString(id self, SEL s) { (void)s; return ((struct nsurl *)self)->str; }
 static const char *after_scheme(const char *u) { const char *p = strstr(u, "://"); return p ? p + 3 : u; }
@@ -850,7 +852,7 @@ void rt_foundation_more_init(void) {
     Class u = RT_CLASS(NSURL);
     CM(u, "URLWithString:", u_withString); CM(u, "URLWithString:relativeToURL:", u_withStringRel);
     CM(u, "fileURLWithPath:", u_fileURL); CM(u, "fileURLWithPath:isDirectory:", u_fileURLDir);
-    IM(u, "initWithString:", u_initWithString); IM(u, "initFileURLWithPath:", u_initFileURL); IM(u, "dealloc", u_dealloc);
+    IM(u, "initWithString:", u_initWithString); IM(u, "initFileURLWithPath:", u_initFileURL); IM(u, "initFileURLWithPath:isDirectory:", u_initFileURLDir); IM(u, "initWithString:relativeToURL:", u_initWithStringRel); IM(u, "dealloc", u_dealloc);
     IM(u, "absoluteString", u_absoluteString); IM(u, "description", u_absoluteString); IM(u, "relativeString", u_absoluteString);
     IM(u, "path", u_path); IM(u, "relativePath", u_path); IM(u, "scheme", u_scheme); IM(u, "host", u_host); IM(u, "query", u_query);
     IM(u, "isFileURL", u_isFile); IM(u, "lastPathComponent", u_lastPath); IM(u, "pathExtension", u_pathExt);

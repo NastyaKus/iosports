@@ -359,6 +359,8 @@ static id d_withObjectsForKeysCount(Class c, SEL s, id *v, id *k, unsigned long 
 static id d_withObjectForKey(Class c, SEL s, id v, id k) { (void)s; return objc_autorelease(d_alloc_with(c, &v, &k, 1)); }
 static id d_withObjectsForKeys(Class c, SEL s, id va, id ka) {
     (void)s; struct nsarr *v = (struct nsarr *)va, *k = (struct nsarr *)ka;
+    if (!va || !ka) return objc_autorelease(d_alloc_with(c, NULL, NULL, 0));
+    if (v->n != k->n) rt_soft_error("*** -[NSDictionary initWithObjects:forKeys:]: count of objects differs from count of keys");
     return objc_autorelease(d_alloc_with(c, v->items, k->items, v->n < k->n ? v->n : k->n));
 }
 static id d_withDictionary(Class c, SEL s, id o) { (void)s; struct nsdict *d = (struct nsdict *)o; return objc_autorelease(d_alloc_with(c, d ? d->vals : NULL, d ? d->keys : NULL, d ? d->n : 0)); }
@@ -384,6 +386,21 @@ static void d_dealloc(id self, SEL s) {
 }
 static unsigned long d_count(id self, SEL s) { (void)s; return ((struct nsdict *)self)->n; }
 static id d_objectForKey(id self, SEL s, id k) { (void)s; return rt_dict_get(self, k); }
+static id d_objectsForKeys(id self, SEL s, id keys, id marker) {
+    (void)s; size_t n = keys ? rt_array_count(keys) : 0;
+    id out = objc_autorelease(a_alloc_with(RT_CLASS(NSMutableArray), NULL, 0));
+    for (size_t i = 0; i < n; i++) {
+        id v = rt_dict_get(self, rt_array_at(keys, i));
+        RT_SEND1(void, out, "addObject:", id, v ? v : marker);
+    }
+    return out;
+}
+static id d_allKeysForObject(id self, SEL s, id obj) {
+    (void)s; struct nsdict *d = (struct nsdict *)self;
+    id out = objc_autorelease(a_alloc_with(RT_CLASS(NSMutableArray), NULL, 0));
+    for (size_t i = 0; i < d->n; i++) if (obj_eq(d->vals[i], obj)) RT_SEND1(void, out, "addObject:", id, d->keys[i]);
+    return out;
+}
 static id d_allKeys(id self, SEL s) { (void)s; struct nsdict *d = (struct nsdict *)self; return objc_autorelease(a_alloc_with(RT_CLASS(NSArray), d->keys, d->n)); }
 static id d_allValues(id self, SEL s) { (void)s; struct nsdict *d = (struct nsdict *)self; return objc_autorelease(a_alloc_with(RT_CLASS(NSArray), d->vals, d->n)); }
 static unsigned long d_fast(id self, SEL s, struct fast_state *st, id *buf, unsigned long len) {
@@ -490,7 +507,7 @@ void rt_collections_init(void) {
     IM(d, "initWithObjectsAndKeys:", iosrt_imp_initWithObjectsAndKeys); IM(d, "initWithDictionary:", d_initWithDictionary);
     IM(d, "dealloc", d_dealloc); IM(d, "count", d_count); IM(d, "objectForKey:", d_objectForKey);
     IM(d, "objectForKeyedSubscript:", d_objectForKey); IM(d, "valueForKey:", d_objectForKey);
-    IM(d, "allKeys", d_allKeys); IM(d, "allValues", d_allValues); IM(d, "countByEnumeratingWithState:objects:count:", d_fast);
+    IM(d, "allKeys", d_allKeys); IM(d, "objectsForKeys:notFoundMarker:", d_objectsForKeys); IM(d, "allKeysForObject:", d_allKeysForObject); IM(d, "allValues", d_allValues); IM(d, "countByEnumeratingWithState:objects:count:", d_fast);
     IM(d, "enumerateKeysAndObjectsUsingBlock:", d_enumerate); IM(d, "keyEnumerator", d_keyEnumerator);
     IM(d, "copyWithZone:", d_copy); IM(d, "mutableCopyWithZone:", d_mutableCopy); IM(d, "description", coll_description);
     IM(d, "isEqual:", d_isEqual); IM(d, "isEqualToDictionary:", d_isEqual); IM(d, "hash", d_count);

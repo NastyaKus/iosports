@@ -438,8 +438,6 @@ int32_t iosrt_AudioSessionGetProperty(uint32_t id, uint32_t *sz, void *d) {
     if (d && sz) memset(d, 0, *sz);
     return 0;
 }
-int32_t iosrt_AudioServicesCreateSystemSoundID(id url, uint32_t *sid) { (void)url; if (sid) *sid = 1; return 0; }
-void iosrt_AudioServicesPlaySystemSound(uint32_t sid) { (void)sid; }
 
 /* ---------------------------------------------------------- AVAudioSession */
 static id g_session;
@@ -481,7 +479,9 @@ id iosrt_AVAudioSessionCategoryPlayback, iosrt_AVAudioSessionCategoryPlayAndReco
    iosrt_AVAudioSessionModeMeasurement, iosrt_AVAudioSessionInterruptionNotification, iosrt_AVAudioSessionRouteChangeNotification,
    iosrt_AVAudioSessionMediaServicesWereResetNotification, iosrt_AVAudioSessionInterruptionTypeKey, iosrt_AVAudioSessionRouteChangeReasonKey;
 
+void rt_player_init(void);
 void rt_audio_init(void) {
+    rt_player_init();
     rt_native_class(RT_CLASS(AVAudioSession), &iosrt_meta_AVAudioSession, "AVAudioSession", RT_CLASS(NSObject), 0);
     Class a = RT_CLASS(AVAudioSession);
     CM(a, "sharedInstance", as_shared);

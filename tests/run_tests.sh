@@ -57,6 +57,21 @@ cat > "$S/Storyboard.app/Info.plist" <<PL
 <key>UILaunchStoryboardName</key><string>LaunchScreen</string></dict></plist>
 PL
 app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework CoreText
+app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
+app "$S/audioqueue_demo" 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
+app "$S/xml_demo" 12.0 "$root/samples/xml_demo/main.m" $F
+rm -rf "$S/Land.app"; mkdir -p "$S/Land.app"
+app "$S/Land.app/Land" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
+cat > "$S/Land.app/Info.plist" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Land</string><key>CFBundleIdentifier</key><string>org.iosrt.land</string>
+<key>UILaunchStoryboardName</key><string>LaunchScreen</string>
+<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array></dict></plist>
+PL
+app "$S/audiofile_demo" 12.0 "$root/samples/audiofile_demo/main.m" $F -framework UIKit -framework AVFoundation -framework AudioToolbox
+rm -rf "$S/WebJS.app"; mkdir -p "$S/WebJS.app"
+app "$S/WebJS.app/WebJS" 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tests/make_webjs_bundle.py" "$S/WebJS.app"
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
@@ -132,10 +147,42 @@ for flavor in linux-aarch64 android-arm64; do
   grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
   grep '^ctrun ' "$T/out.txt" >>"$T/events.txt"
   if [ $rc = 0 ] && diff -u "$root/tests/golden/coretext_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "coretext_demo (CTLine/CTRun/CTFramesetter, attributed runs)"; else ko "coretext_demo rc=$rc" "$T/diff.txt"; fi
+  # 3j. scripted page: JS steps through sections, hit tests via elementFromPoint, iframe command bridge, timers
+  IOSRT_HEADLESS_FRAMES=16 IOSRT_SCRIPT="4:tap:293,395;6:tap:75,395;8:tap:293,395;10:tap:293,395;12:tap:336,20" $R "$S/WebJS.app" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen ' "$T/out.txt" >"$T/events.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/webjs_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "webjs_demo (JavaScript + DOM: click handlers, elementFromPoint, iframe bridge, timers)"; else ko "webjs_demo rc=$rc" "$T/diff.txt"; fi
+  # 3k. OpenGL ES: EAGL contexts (ES 2, ES 1 + OES FBOs, sharegroups), layer-backed renderbuffer, present into the layer (null GL)
+  rm -f "$T/gl.png"
+  IOSRT_ACCEL=0.12,-0.25,-0.96 IOSRT_HEADLESS_FRAMES=8 IOSRT_PNG_OUT="$T/gl.png" $R "$S/gl_demo" >"$T/out.txt" 2>&1; rc=$?
+  # accelerometer deliveries are timer-paced: checked apart from the ordered events
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen \|^UIAccelerometer\|^CoreMotion' "$T/out.txt" >"$T/events.txt"
+  grep -q '^UIAccelerometer: shared 1, 0.12 -0.25 -0.96' "$T/out.txt" && grep -q '^CoreMotion: available 1, acceleration 0.12 -0.25 -0.96' "$T/out.txt" || rc=99
+  # the presented frame: blue, with the scissored red rectangle at the bottom left (GL's origin)
+  px=$(python3 -I -c "
+import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size
+print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h - 10)))" "$T/gl.png" 2>/dev/null)
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/gl_demo.txt" "$T/events.txt" >"$T/diff.txt" && grep -q '^image 0,0 375x667 px=750x1334' "$T/out.txt" && [ "$px" = "(26, 51, 204) (230, 26, 26) (26, 51, 204)" ]; then ok "gl_demo (EAGL + renderbuffer from CAEAGLLayer + present, ES 1/2 contexts, accelerometer)"; else echo "       pixels: $px"; ko "gl_demo rc=$rc" "$T/diff.txt"; fi
+  # 3l. landscape-only app: the screen turns, the GL drawable follows
+  IOSRT_HEADLESS_FRAMES=6 $R "$S/Land.app" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && grep -q '^screen 667x375' "$T/out.txt" && grep -q '^storage from layer 1: 1334x750 px' "$T/out.txt"; then ok "landscape app (Info.plist orientations -> 667x375 screen, 1334x750 drawable)"; else ko "landscape rc=$rc" "$T/out.txt"; fi
+  # 3m. NSXMLParser: elements, entities, CDATA, comments, namespaces, errors
+  $R "$S/xml_demo" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/xml_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "xml_demo (NSXMLParser events, namespaces, errors)"; else ko "xml_demo rc=$rc" "$T/diff.txt"; fi
   # 4. AudioToolbox RemoteIO -> WAV backend
   rm -f "$T/sine.wav"
   IOSRT_AUDIO_WAV=$T/sine.wav $R "$S/audio_sine" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && grep -q "many render callbacks" "$T/out.txt" && python3 -I "$root/tests/check_wav.py" "$T/sine.wav" >"$T/wav.txt"; then ok "audio_sine ($(cat "$T/wav.txt"))"; else ko "audio_sine rc=$rc" "$T/out.txt"; fi
+  # 4a. AudioQueue output: primed buffers refilled from the callback -> WAV backend
+  rm -f "$T/aq.wav"
+  IOSRT_AUDIO_WAV=$T/aq.wav $R "$S/audioqueue_demo" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/audioqueue_demo.txt" "$T/out.txt" >"$T/diff.txt" && python3 -I "$root/tests/check_wav.py" "$T/aq.wav" >"$T/wav.txt"; then ok "audioqueue_demo ($(cat "$T/wav.txt"))"; else ko "audioqueue_demo rc=$rc" "$T/diff.txt"; fi
+  # 4b'. audio files: ExtAudioFile write/read with conversion, AudioFile, AudioConverter, AVAudioPlayer, system sounds
+  IOSRT_HEADLESS_FRAMES=40 IOSRT_SCRIPT="20:wait:1500" $R "$S/audiofile_demo" >"$T/out.txt" 2>&1; rc=$?
+  grep -v '^[a-zA-Z0-9]* [-0-9.]*,[-0-9.]* \|^screen \|finished' "$T/out.txt" >"$T/events.txt"
+  grep -q '^AVAudioPlayer finished: successfully 1, playing 0' "$T/out.txt" && grep -q '^system sound finished' "$T/out.txt" || rc=99
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/audiofile_demo.txt" "$T/events.txt" >"$T/diff.txt"; then ok "audiofile_demo (ExtAudioFile, AudioFile, AudioConverter, AVAudioPlayer, system sounds)"; else ko "audiofile_demo rc=$rc" "$T/diff.txt"; fi
   # 4b. C++ on the Apple libc++ ABI (only the Android build links the C++ support)
   if [ $flavor = android-arm64 ]; then
     $R "$S/cxx_basics" >"$T/out.txt" 2>&1; rc=$?
@@ -151,14 +198,14 @@ for flavor in linux-aarch64 android-arm64; do
   check_reject "$T/armv7_only" "no arm64 slice" "armv7-only fat binary"
   check_reject "$T/garbage" "not a Mach-O" "non-Mach-O file"
   $R "$S/neg_missing_api" >"$T/out.txt" 2>&1; rc=$?
-  if [ $rc = 70 ] && grep -q "unimplemented function _CFNetworkCopySystemProxySettings" "$T/out.txt" && grep -q "before missing call" "$T/out.txt"; then ok "missing API traps with its name"; else ko "missing API rc=$rc" "$T/out.txt"; fi
+  if [ $rc = 70 ] && grep -q "unimplemented function _CFNetworkExecuteProxyAutoConfigurationURL" "$T/out.txt" && grep -q "before missing call" "$T/out.txt"; then ok "missing API traps with its name"; else ko "missing API rc=$rc" "$T/out.txt"; fi
   $R "$S/neg_unrecognized" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 71 ] && grep -q "noSuchMethod\]: unrecognized selector" "$T/out.txt"; then ok "unrecognized selector reported"; else ko "unrecognized selector rc=$rc" "$T/out.txt"; fi
   # 6. compatibility report
   $R --report "$S/objc_basics" >"$T/out.txt" 2>&1
   if grep -q "missing: 0" "$T/out.txt" && grep -q "objc classes: 4, categories: 2" "$T/out.txt"; then ok "--report on a fully supported app"; else ko "--report" "$T/out.txt"; fi
   $R --report "$S/neg_missing_api" >"$T/out.txt" 2>&1
-  if grep -q "missing: 1" "$T/out.txt" && grep -q "_CFNetworkCopySystemProxySettings" "$T/out.txt"; then ok "--report lists missing symbols"; else ko "--report missing" "$T/out.txt"; fi
+  if grep -q "missing: 1" "$T/out.txt" && grep -q "_CFNetworkExecuteProxyAutoConfigurationURL" "$T/out.txt"; then ok "--report lists missing symbols"; else ko "--report missing" "$T/out.txt"; fi
 done
 echo "== $pass passed, $fail failed"
 [ $fail = 0 ]

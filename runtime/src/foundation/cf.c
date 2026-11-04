@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
 
 RT_DECLARE_CLASS(NSNumber);
 RT_DECLARE_CLASS(NSString);
@@ -96,6 +97,16 @@ id iosrt_CFStringCreateCopy(const void *alloc, id s) { (void)alloc; return s ? R
 id iosrt_CFStringCreateMutable(const void *alloc, long max) { (void)alloc; (void)max; return RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSMutableString), "alloc"), "init"); }
 id iosrt_CFStringCreateMutableCopy(const void *alloc, long max, id s) { (void)alloc; (void)max; return s ? RT_SEND0(id, s, "mutableCopy") : iosrt_CFStringCreateMutable(alloc, 0); }
 void iosrt_CFStringAppend(id m, id s) { if (m && s) RT_SEND1(void, m, "appendString:", id, s); }
+void iosrt_CFStringAppendCharacters(id m, const unichar *chars, long n) {
+    if (!m || !chars || n <= 0) return;
+    id s = rt_str_new_utf16(chars, (size_t)n); RT_SEND1(void, m, "appendString:", id, s); objc_release(s);
+}
+/* in-place case mapping of a mutable string (the locale argument is ignored) */
+void iosrt_CFStringLowercase(id m, id locale) { (void)locale; if (m) RT_SEND1(void, m, "setString:", id, RT_SEND0(id, m, "lowercaseString")); }
+void iosrt_CFStringUppercase(id m, id locale) { (void)locale; if (m) RT_SEND1(void, m, "setString:", id, RT_SEND0(id, m, "uppercaseString")); }
+void iosrt_CFStringCapitalize(id m, id locale) { (void)locale; if (m) RT_SEND1(void, m, "setString:", id, RT_SEND0(id, m, "capitalizedString")); }
+/* Unicode normalization: strings are kept as given (most app text is already NFC) */
+void iosrt_CFStringNormalize(id m, long form) { (void)m; (void)form; }
 void iosrt_CFStringAppendCString(id m, const char *s, uint32_t enc) { (void)enc; if (m && s) RT_SEND1(void, m, "appendString:", id, rt_str(s)); }
 unichar iosrt_CFStringGetCharacterAtIndex(id s, long i) { return (unichar)RT_SEND1(unsigned long, s, "characterAtIndex:", unsigned long, (unsigned long)i); }
 void iosrt_CFStringGetCharacters(id s, NSRange r, unichar *buf) { RT_SEND2(void, s, "getCharacters:range:", unichar *, buf, NSRange, r); }
@@ -168,6 +179,23 @@ void iosrt_CFDataGetBytes(id d, NSRange r, uint8_t *out) { const uint8_t *b = rt
 /* -------------------------------------------------------------- URL & misc */
 id iosrt_CFURLCreateWithFileSystemPath(const void *alloc, id path, long style, long dir) { (void)alloc; (void)style; (void)dir; return objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "fileURLWithPath:", id, path)); }
 id iosrt_CFURLCreateWithString(const void *alloc, id s, id base) { (void)alloc; (void)base; return objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "URLWithString:", id, s)); }
+id iosrt_CFURLCreateFromFileSystemRepresentation(const void *alloc, const uint8_t *buf, long len, long dir) {
+    (void)alloc; (void)dir;
+    char *p = strndup((const char *)buf, len > 0 ? (size_t)len : 0);
+    id url = objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "fileURLWithPath:", id, rt_str(p)));
+    free(p); return url;
+}
+id iosrt_CFURLCreateAbsoluteURLWithBytes(const void *alloc, const uint8_t *buf, long len, uint32_t enc, id base, long compat) {
+    (void)alloc; (void)enc; (void)compat;
+    char *p = strndup((const char *)buf, len > 0 ? (size_t)len : 0);
+    id url = RT_SEND2(id, (id)RT_CLASS(NSURL), "URLWithString:relativeToURL:", id, rt_str(p), id, base);
+    free(p);
+    if (url && base) url = RT_SEND0(id, url, "absoluteURL");
+    return objc_retain(url);
+}
+id iosrt_CFURLCreateWithBytes(const void *alloc, const uint8_t *buf, long len, uint32_t enc, id base) { return iosrt_CFURLCreateAbsoluteURLWithBytes(alloc, buf, len, enc, base, 0); }
+/* no proxies configured */
+id iosrt_CFNetworkCopySystemProxySettings(void) { return RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSDictionary"), "alloc"), "init"); }
 rt_bool iosrt_CFURLGetFileSystemRepresentation(id url, long resolve, uint8_t *buf, long max) {
     (void)resolve; if (!url) return 0; const char *p = rt_str_utf8(RT_SEND0(id, url, "path")); size_t n = strlen(p);
     if ((long)n + 1 > max) return 0; memcpy(buf, p, n + 1); return 1;
@@ -200,6 +228,8 @@ void iosrt_CFRunLoopRemoveSource(void *rl, void *src, id mode) { (void)rl; (void
 void *iosrt_CFRunLoopObserverCreate(const void *a, unsigned long act, long rep, long ord, void *cb, void *ctx) { (void)a; (void)act; (void)rep; (void)ord; (void)cb; (void)ctx; return NULL; }
 void iosrt_CFRunLoopAddObserver(void *rl, void *o, id mode) { (void)rl; (void)o; (void)mode; }
 uint32_t iosrt_CFStringConvertNSStringEncodingToEncoding(unsigned long e) { return e == 4 ? 0x08000100 : e == 1 ? 0x0600 : 0x08000100; }
+uint32_t iosrt_CFStringConvertEncodingToWindowsCodepage(uint32_t e) { return e == 0x0600 ? 20127 : e == 0x0201 ? 1252 : e == 0x0500 ? 1252 : 65001; }
+uint32_t iosrt_CFStringConvertWindowsCodepageToEncoding(uint32_t cp) { return cp == 1252 ? 0x0500 : cp == 20127 ? 0x0600 : 0x08000100; }
 unsigned long iosrt_CFStringConvertEncodingToNSStringEncoding(uint32_t e) { return e == 0x0600 ? 1 : 4; }
 
 void rt_cf_init(void) {
@@ -210,3 +240,49 @@ void rt_cf_init(void) {
 
 struct cfuuid_bytes { uint8_t b[16]; };
 struct cfuuid_bytes iosrt_CFUUIDGetUUIDBytes(id u) { struct cfuuid_bytes r; memset(&r, 0, sizeof r); if (u) RT_SEND1(void, u, "getUUIDBytes:", uint8_t *, r.b); return r; }
+
+/* ------------------------------------------------- CFNotificationCenter
+ * Local and Darwin centers share one in-process registry (there are no other
+ * processes to hear Darwin notifications); posts reach C callbacks
+ * registered here. */
+typedef void (*cfnote_cb)(void *center, void *observer, id name, const void *object, id userInfo);
+struct cfnote_obs { void *observer; cfnote_cb cb; id name; const void *object; struct cfnote_obs *next; };
+static struct cfnote_obs *g_cfnotes;
+static pthread_mutex_t g_cfnote_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_local_center, g_darwin_center;
+void *iosrt_CFNotificationCenterGetLocalCenter(void) { return &g_local_center; }
+void *iosrt_CFNotificationCenterGetDarwinNotifyCenter(void) { return &g_darwin_center; }
+void *iosrt_CFNotificationCenterGetDistributedCenter(void) { return &g_darwin_center; }
+void iosrt_CFNotificationCenterAddObserver(void *center, void *observer, cfnote_cb cb, id name, const void *object, long behavior) {
+    (void)center; (void)behavior;
+    if (!cb) return;
+    struct cfnote_obs *o = calloc(1, sizeof *o);
+    o->observer = observer; o->cb = cb; o->name = name ? RT_SEND0(id, name, "copy") : NULL; o->object = object;
+    pthread_mutex_lock(&g_cfnote_lock); o->next = g_cfnotes; g_cfnotes = o; pthread_mutex_unlock(&g_cfnote_lock);
+}
+static void cfnote_remove(void *observer, id name, const void *object, int all) {
+    pthread_mutex_lock(&g_cfnote_lock);
+    for (struct cfnote_obs **pp = &g_cfnotes; *pp;) {
+        struct cfnote_obs *o = *pp;
+        int match = o->observer == observer && (all || ((!name || (o->name && (RT_SEND1(long, o->name, "isEqualToString:", id, name) & 0xff))) && (!object || o->object == object)));
+        if (match) { *pp = o->next; objc_release(o->name); free(o); } else pp = &o->next;
+    }
+    pthread_mutex_unlock(&g_cfnote_lock);
+}
+void iosrt_CFNotificationCenterRemoveObserver(void *center, void *observer, id name, const void *object) { (void)center; cfnote_remove(observer, name, object, 0); }
+void iosrt_CFNotificationCenterRemoveEveryObserver(void *center, void *observer) { (void)center; cfnote_remove(observer, NULL, NULL, 1); }
+void iosrt_CFNotificationCenterPostNotification(void *center, id name, const void *object, id userInfo, long deliverImmediately) {
+    (void)deliverImmediately;
+    /* snapshot matching observers, then call outside the lock */
+    struct cfnote_obs *hits[64]; int n = 0;
+    pthread_mutex_lock(&g_cfnote_lock);
+    for (struct cfnote_obs *o = g_cfnotes; o && n < 64; o = o->next)
+        if ((!o->name || (name && (RT_SEND1(long, o->name, "isEqualToString:", id, name) & 0xff))) && (!o->object || o->object == object)) hits[n++] = o;
+    struct { void *observer; cfnote_cb cb; } calls[64];
+    for (int i = 0; i < n; i++) { calls[i].observer = hits[i]->observer; calls[i].cb = hits[i]->cb; }
+    pthread_mutex_unlock(&g_cfnote_lock);
+    for (int i = 0; i < n; i++) calls[i].cb(center, calls[i].observer, name, object, userInfo);
+}
+void iosrt_CFNotificationCenterPostNotificationWithOptions(void *center, id name, const void *object, id userInfo, unsigned long opts) {
+    iosrt_CFNotificationCenterPostNotification(center, name, object, userInfo, (long)(opts & 1));
+}

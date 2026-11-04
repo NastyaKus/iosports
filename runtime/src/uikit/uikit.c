@@ -58,7 +58,13 @@ float rt_scr_w = 375, rt_scr_h = 667, rt_scr_scale = 2;
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 struct touch_ev { int phase; float x, y; int tid; };
 static struct touch_ev touchq[512]; static int tq_head, tq_tail;
-void iosrt_set_screen(float w, float h, float scale) { if (w > 0) rt_scr_w = w; if (h > 0) rt_scr_h = h; if (scale > 0) rt_scr_scale = scale; }
+/* landscape-only apps: 0 = portrait, else the UIInterfaceOrientation shown (3 LandscapeRight, 4 LandscapeLeft).
+ * The app sees a landscape screen; frames are turned into the device's portrait buffer and touches back. */
+int rt_landscape;
+static void orient_screen(void) {
+    if (rt_landscape && rt_scr_w < rt_scr_h) { float t = rt_scr_w; rt_scr_w = rt_scr_h; rt_scr_h = t; }
+}
+void iosrt_set_screen(float w, float h, float scale) { if (w > 0) rt_scr_w = w; if (h > 0) rt_scr_h = h; if (scale > 0) rt_scr_scale = scale; orient_screen(); }
 void iosrt_push_touch_id(int tid, int phase, float x, float y) {
     pthread_mutex_lock(&input_lock);
     int n = (tq_tail + 1) % 512;
@@ -67,7 +73,11 @@ void iosrt_push_touch_id(int tid, int phase, float x, float y) {
 }
 void iosrt_push_touch(int phase, float x, float y) { iosrt_push_touch_id(0, phase, x, y); }
 /* touches given in pixels of the presented frame */
-void rt_push_touch_px(int tid, int phase, float x, float y) { iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale); }
+void rt_push_touch_px(int tid, int phase, float x, float y) {
+    if (rt_landscape == 3) { float lw = rt_scr_h * rt_scr_scale; float nx = y, ny = lw - x; x = nx; y = ny; }        /* lw: portrait buffer width */
+    else if (rt_landscape == 4) { float lh = rt_scr_w * rt_scr_scale; float nx = lh - y, ny = x; x = nx; y = ny; }
+    iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale);
+}
 void iosrt_request_quit(void) { rt_quit_requested = 1; }
 static volatile int dirty = 1;
 void rt_ui_mark_dirty(void) { dirty = 1; }
@@ -352,6 +362,7 @@ static void v_layoutIfNeeded(id self, SEL s) { (void)s; layout_tree(self); }
 static void v_noop(id self, SEL s) { (void)self; (void)s; }
 static void v_noop1(id self, SEL s, id a) { (void)self; (void)s; (void)a; }
 static void v_noopL(id self, SEL s, long a) { (void)self; (void)s; (void)a; }
+static rt_bool v_isOpaque(id self, SEL s) { (void)self; (void)s; return 1; }
 static void v_noopD(id self, SEL s, double a) { (void)self; (void)s; (void)a; }
 static void v_noopFL(id self, SEL s, float a, long b) { (void)self; (void)s; (void)a; (void)b; }
 static id v_nil(id self, SEL s) { (void)self; (void)s; return NULL; }
@@ -609,7 +620,7 @@ static id dev_sysname(id self, SEL s) { (void)self; (void)s; return rt_str("iOS"
 static id dev_model(id self, SEL s) { (void)self; (void)s; return rt_str("iPhone"); }
 static id dev_name(id self, SEL s) { (void)self; (void)s; return rt_str("iosrt device"); }
 static long dev_idiom(id self, SEL s) { (void)self; (void)s; return 0; }
-static long dev_orientation(id self, SEL s) { (void)self; (void)s; return 1; }
+static long dev_orientation(id self, SEL s) { (void)self; (void)s; return rt_landscape ? (rt_landscape == 3 ? 3 : 4) : 1; }   /* UIDeviceOrientationLandscapeLeft = 3 matches interface LandscapeRight */
 static float dev_battery(id self, SEL s) { (void)self; (void)s; return 1.0f; }
 static long dev_batteryState(id self, SEL s) { (void)self; (void)s; return 3; }
 static id dev_vendorId(id self, SEL s) { (void)self; (void)s; return RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSUUID"), "alloc"), "init"); }
@@ -633,7 +644,7 @@ static void app_setDelegate(id self, SEL s, id d) { (void)s; ((struct uiapp *)se
 static id app_keyWindow(id self, SEL s) { (void)s; return ((struct uiapp *)self)->keyWindow; }
 static id app_windows(id self, SEL s) { (void)s; return ((struct uiapp *)self)->windows; }
 static long app_state(id self, SEL s) { (void)self; (void)s; return 0; }
-static long app_orientation(id self, SEL s) { (void)self; (void)s; return 1; }
+static long app_orientation(id self, SEL s) { (void)self; (void)s; return rt_landscape ? rt_landscape : 1; }
 static rt_bool app_openURL(id self, SEL s, id url) { (void)self; (void)s; if (url) rt_log("openURL: %s (not supported)", rt_str_utf8(RT_SEND0(id, url, "absoluteString"))); return 0; }
 static void app_openURLopts(id self, SEL s, id url, id opts, void *comp) { (void)opts; app_openURL(self, s, url); if (comp) ((void (*)(void *, long))((struct rt_block *)comp)->invoke)(comp, 0); }
 static rt_bool app_canOpenURL(id self, SEL s, id url) { (void)self; (void)s; (void)url; return 0; }
@@ -1144,7 +1155,18 @@ static void render_frame(unsigned frame, int want_trace) {
             free(last_dump); last_dump = rt_sb_take(&sb);
         } else free(sb.buf);
     }
-    if (rt_plat->present_frame) rt_plat->present_frame(surf->px, surf->w, surf->h, surf->stride);
+    if (rt_plat->present_frame) {
+        if (!rt_landscape) rt_plat->present_frame(surf->px, surf->w, surf->h, surf->stride);
+        else {   /* turn the landscape frame into the device's portrait buffer */
+            static uint32_t *rot; static size_t rotn;
+            int W = surf->w, H = surf->h; size_t need = (size_t)W * H;
+            if (need > rotn) { free(rot); rot = malloc(need * 4); rotn = need; }
+            const uint32_t *src = surf->px; int st = surf->stride;
+            if (rt_landscape == 3) { for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) rot[(size_t)x * H + (H - 1 - y)] = src[(size_t)y * st + x]; }
+            else { for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) rot[(size_t)(W - 1 - x) * H + y] = src[(size_t)y * st + x]; }
+            rt_plat->present_frame(rot, H, W, H);
+        }
+    }
 }
 static void finish_launch(id app) {
     struct uiapp *a = (struct uiapp *)app;
@@ -1158,6 +1180,24 @@ static void finish_launch(id app) {
 /* iOS compatibility ("zoomed") mode: an app without a launch storyboard only
  * gets the largest iPhone screen it ships a launch image for (else 320x480);
  * the system scales that up to the display. */
+static void choose_orientation(void) {
+    id bundle = RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle");
+    id info = bundle ? RT_SEND0(id, bundle, "infoDictionary") : NULL;
+    if (!info || getenv("IOSRT_PORTRAIT")) return;
+    id list = rt_dict_get(info, rt_str("UISupportedInterfaceOrientations~iphone"));
+    if (!list) list = rt_dict_get(info, rt_str("UISupportedInterfaceOrientations"));
+    int land_l = 0, land_r = 0, portrait = 0;
+    for (size_t i = 0; list && i < rt_array_count(list); i++) {
+        const char *o = rt_str_utf8(rt_array_at(list, i));
+        if (strstr(o, "LandscapeLeft")) land_l = 1; else if (strstr(o, "LandscapeRight")) land_r = 1; else if (strstr(o, "Portrait")) portrait = 1;
+    }
+    if (!list) { id one = rt_dict_get(info, rt_str("UIInterfaceOrientation")); const char *o = one ? rt_str_utf8(one) : "";
+                 if (strstr(o, "LandscapeRight")) land_r = 1; else if (strstr(o, "LandscapeLeft")) land_l = 1; }
+    if (portrait || !(land_l || land_r)) return;
+    rt_landscape = land_r ? 3 : 4;
+    orient_screen();
+    rt_log("landscape app: screen %gx%g pt, shown turned on the device", rt_scr_w, rt_scr_h);
+}
 static void choose_compat_screen(void) {
     if (getenv("IOSRT_NO_COMPAT_SCREEN")) return;
     id bundle = RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle");
@@ -1179,6 +1219,7 @@ static void choose_compat_screen(void) {
     const char *dir = rt_str_utf8(RT_SEND0(id, bundle, "bundlePath"));
     char p[4096]; snprintf(p, sizeof p, "%s/Default-568h@2x.png", dir);
     if (bh < 568 && access(p, F_OK) == 0) { bw = 320; bh = 568; }
+    if (rt_landscape) { double t = bw; bw = bh; bh = t; }
     if (bw >= rt_scr_w && bh >= rt_scr_h) return;
     rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);
     rt_scr_w = (float)bw; rt_scr_h = (float)bh; rt_scr_scale = 2;
@@ -1187,6 +1228,7 @@ id g_main_nib_objects;   /* the main nib's top-level objects, kept for the app's
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
     (void)argc; (void)argv;
     void *pool = objc_autoreleasePoolPush();
+    choose_orientation();
     choose_compat_screen();
     Class appc = principal ? rt_class_named(rt_str_utf8(principal)) : NULL;
     id app = app_shared(appc ? appc : RT_CLASS(UIApplication), NULL);
@@ -1363,6 +1405,8 @@ void rt_uikit_init(void) {
     rt_text_init();
     { void rt_coretext_init(void); rt_coretext_init(); }
     rt_layers_init();
+    { void rt_eagl_init(void); rt_eagl_init(); }
+    { void rt_motion_init(void); rt_motion_init(); }
 
     NEWCLASS(UIResponder, o, 0);
     Class r = RT_CLASS(UIResponder);
@@ -1456,7 +1500,7 @@ void rt_uikit_init(void) {
     IM(v, "setAccessibilityContainerType:", v_noopL); IM(v, "setAccessibilityElements:", v_noop1); IM(v, "addConstraint:", v_noop1); IM(v, "addConstraints:", v_noop1);
     IM(v, "removeConstraint:", v_noop1); IM(v, "removeConstraints:", v_noop1); IM(v, "constraints", v_nil); IM(v, "updateConstraintsIfNeeded", v_noop);
     IM(v, "setNeedsUpdateConstraints", v_noop); IM(v, "updateConstraints", v_noop);
-    IM(v, "setOpaque:", v_noopL); IM(v, "setClearsContextBeforeDrawing:", v_noopL); IM(v, "setPreservesSuperviewLayoutMargins:", v_noopL);
+    IM(v, "setOpaque:", v_noopL); IM(v, "isOpaque", v_isOpaque); IM(v, "setClearsContextBeforeDrawing:", v_noopL); IM(v, "setPreservesSuperviewLayoutMargins:", v_noopL);
     IM(v, "setSemanticContentAttribute:", v_noopL); IM(v, "setInsetsLayoutMarginsFromSafeArea:", v_noopL); IM(v, "setRestorationIdentifier:", v_noop1);
     IM(v, "description", v_description);
     CM(v, "animateWithDuration:animations:", va_anim); CM(v, "animateWithDuration:animations:completion:", va_animC);

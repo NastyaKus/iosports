@@ -34,6 +34,8 @@ extern NSString *const kCALineCapRound;
 @property CGFloat borderWidth;
 @property CGFloat cornerRadius;
 @property (strong) id contents;
+@property CGFloat contentsScale;
+@property (getter=isOpaque) BOOL opaque;
 @property (readonly) NSArray *sublayers;
 - (void)addSublayer:(CALayer *)l;
 - (void)removeFromSuperlayer;
@@ -75,4 +77,21 @@ extern NSString *const kCALineCapRound;
 + (void)begin; + (void)commit;
 + (void)setCompletionBlock:(void (^)(void))block;
 + (void)setDisableActions:(BOOL)flag;
+@end
+@interface CADisplayLink : NSObject
++ (CADisplayLink *)displayLinkWithTarget:(id)target selector:(SEL)sel;
+- (void)addToRunLoop:(NSRunLoop *)runloop forMode:(NSString *)mode;
+- (void)removeFromRunLoop:(NSRunLoop *)runloop forMode:(NSString *)mode;
+- (void)invalidate;
+@property (readonly) CFTimeInterval timestamp;
+@property (readonly) CFTimeInterval duration;
+@property (getter=isPaused) BOOL paused;
+@property NSInteger frameInterval;
+@property NSInteger preferredFramesPerSecond;
+@end
+@protocol EAGLDrawable
+@property (copy) NSDictionary *drawableProperties;
+@end
+@interface CAEAGLLayer : CALayer <EAGLDrawable>
+@property BOOL presentsWithTransaction;
 @end

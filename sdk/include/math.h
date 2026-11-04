@@ -38,8 +38,8 @@ typedef double double_t;
 #define islessequal(x, y) __builtin_islessequal(x, y)
 #define islessgreater(x, y) __builtin_islessgreater(x, y)
 #define isunordered(x, y) __builtin_isunordered(x, y)
-#define _M(f) double f(double); float f##f(float); long double f##l(long double);
-#define _M2(f) double f(double, double); float f##f(float, float); long double f##l(long double, long double);
+#define _M(n) double n(double); float n##f(float); long double n##l(long double);
+#define _M2(n) double n(double, double); float n##f(float, float); long double n##l(long double, long double);
 _M(acos) _M(asin) _M(atan) _M(cos) _M(sin) _M(tan) _M(acosh) _M(asinh) _M(atanh) _M(cosh) _M(sinh) _M(tanh)
 _M(exp) _M(exp2) _M(expm1) _M(log) _M(log10) _M(log2) _M(log1p) _M(logb) _M(sqrt) _M(cbrt) _M(fabs) _M(ceil) _M(floor)
 _M(round) _M(trunc) _M(rint) _M(nearbyint) _M(erf) _M(erfc) _M(lgamma) _M(tgamma)

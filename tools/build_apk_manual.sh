@@ -20,10 +20,17 @@ CXXINC="-nostdinc++ -isystem $root/runtime/src/cxx/include -isystem $TC/sysroot/
 # Apple-ABI C++ support (std::__1 with the alternate string layout), linked with a static libc++abi
 "$TC/bin/clang++" --target=aarch64-linux-android29 -fPIC -std=c++17 -O2 -g -fno-exceptions $CXXINC \
     -c "$root/runtime/src/cxx/cxx_string.cpp" -o "$W/cxx_string.o"
+# QuickJS (JavaScript for UIWebView pages)
+QOBJS=""
+for f in quickjs libregexp libunicode cutils dtoa; do
+    "$TC/bin/clang" --target=aarch64-linux-android29 -fPIC -std=gnu11 -O2 -w -D_GNU_SOURCE -DNDEBUG \
+        -DCONFIG_VERSION="\"$(cat "$root/runtime/third_party/quickjs/VERSION")\"" -c "$root/runtime/third_party/quickjs/$f.c" -o "$W/qjs_$f.o"
+    QOBJS="$QOBJS $W/qjs_$f.o"
+done
 "$TC/bin/clang" --target=aarch64-linux-android29 -shared -fPIC -std=gnu11 -O2 -g -fsigned-char \
-    -Wall -Wno-unused-parameter -Wno-missing-field-initializers -I"$W/gen" -I"$root/runtime/src/exports" \
+    -Wall -Wno-unused-parameter -Wno-missing-field-initializers -I"$W/gen" -I"$root/runtime/src/exports" -I"$root/runtime/third_party/quickjs" \
     -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB \
-    $SRCS "$root/runtime/src/cxx/cxx_abi.c" "$W/cxx_string.o" "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
+    $SRCS $QOBJS "$root/runtime/src/cxx/cxx_abi.c" "$W/cxx_string.o" "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
     -Wl,-z,max-page-size=16384 -static-libstdc++ -lc++_static -lc++abi -llog -laaudio -lz -ldl -lm
 "$TC/bin/llvm-strip" --strip-debug "$W/lib/arm64-v8a/libiosrt.so"
 

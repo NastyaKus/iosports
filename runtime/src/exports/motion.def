@@ -1,0 +1,6 @@
+/* Accelerometer: UIKit's UIAccelerometer and CoreMotion (runtime/src/motion). */
+CLASS(UIKit, UIAccelerometer)
+CLASS(UIKit, UIAcceleration)
+CLASS(CoreMotion, CMMotionManager)
+CLASS(CoreMotion, CMAccelerometerData)
+CLASS(CoreMotion, CMLogItem)

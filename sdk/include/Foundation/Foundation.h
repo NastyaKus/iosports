@@ -116,6 +116,13 @@ __attribute__((objc_root_class))
 - (instancetype)initWithData:(NSData *)d encoding:(NSStringEncoding)e;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)a encoding:(NSStringEncoding)e error:(NSError **)err;
 @end
+@interface NSCharacterSet : NSObject
++ (NSCharacterSet *)whitespaceCharacterSet;
++ (NSCharacterSet *)whitespaceAndNewlineCharacterSet;
+@end
+@interface NSString (Trimming)
+- (NSString *)stringByTrimmingCharactersInSet:(NSCharacterSet *)set;
+@end
 @interface NSMutableString : NSString
 + (instancetype)stringWithCapacity:(NSUInteger)n;
 - (void)appendString:(NSString *)s;
@@ -324,6 +331,12 @@ __attribute__((objc_root_class))
 @property (readonly, getter=isValid) BOOL valid;
 @property (readonly) id userInfo;
 @end
+@interface NSOperationQueue : NSObject
++ (NSOperationQueue *)mainQueue;
++ (NSOperationQueue *)currentQueue;
+- (void)addOperationWithBlock:(void (^)(void))block;
+@property NSInteger maxConcurrentOperationCount;
+@end
 @interface NSRunLoop : NSObject
 + (NSRunLoop *)currentRunLoop;
 + (NSRunLoop *)mainRunLoop;
@@ -474,4 +487,31 @@ enum { NSDocumentDirectory = 9, NSCachesDirectory = 13, NSUserDomainMask = 1 };
 extern NSString *const NSDefaultRunLoopMode;
 #ifdef __cplusplus
 }
+
 #endif
+@class NSXMLParser;
+@protocol NSXMLParserDelegate <NSObject>
+@optional
+- (void)parserDidStartDocument:(NSXMLParser *)parser;
+- (void)parserDidEndDocument:(NSXMLParser *)parser;
+- (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName attributes:(NSDictionary<NSString *, NSString *> *)attributeDict;
+- (void)parser:(NSXMLParser *)parser didEndElement:(NSString *)elementName namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName;
+- (void)parser:(NSXMLParser *)parser didStartMappingPrefix:(NSString *)prefix toURI:(NSString *)namespaceURI;
+- (void)parser:(NSXMLParser *)parser didEndMappingPrefix:(NSString *)prefix;
+- (void)parser:(NSXMLParser *)parser foundCharacters:(NSString *)string;
+- (void)parser:(NSXMLParser *)parser foundCDATA:(NSData *)CDATABlock;
+- (void)parser:(NSXMLParser *)parser foundComment:(NSString *)comment;
+- (void)parser:(NSXMLParser *)parser parseErrorOccurred:(NSError *)parseError;
+@end
+@interface NSXMLParser : NSObject
+- (instancetype)initWithContentsOfURL:(NSURL *)url;
+- (instancetype)initWithData:(NSData *)data;
+@property (weak) id<NSXMLParserDelegate> delegate;
+@property BOOL shouldProcessNamespaces;
+@property BOOL shouldReportNamespacePrefixes;
+@property BOOL shouldResolveExternalEntities;
+- (BOOL)parse;
+- (void)abortParsing;
+@property (readonly) NSError *parserError;
+@property (readonly) NSInteger lineNumber;
+@end

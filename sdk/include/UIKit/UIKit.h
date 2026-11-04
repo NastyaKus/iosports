@@ -89,6 +89,7 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 @property (readonly, strong) CALayer *layer;
 @property (nonatomic) CGAffineTransform transform;
 @property (nonatomic) BOOL clipsToBounds;
+@property (nonatomic, getter=isOpaque) BOOL opaque;
 @property (nonatomic) UIViewContentMode contentMode;
 @property (nonatomic) UIViewAutoresizing autoresizingMask;
 @property (nonatomic, strong) UIColor *tintColor;
@@ -335,6 +336,22 @@ typedef NS_ENUM(NSInteger, UIWebViewNavigationType) { UIWebViewNavigationTypeLin
 @property (readonly) UIWindow *keyWindow;
 @property (nonatomic, getter=isIdleTimerDisabled) BOOL idleTimerDisabled;
 @end
+
+@class UIAccelerometer;
+@interface UIAcceleration : NSObject
+@property (readonly) NSTimeInterval timestamp;
+@property (readonly) double x, y, z;
+@end
+@protocol UIAccelerometerDelegate <NSObject>
+@optional
+- (void)accelerometer:(UIAccelerometer *)accelerometer didAccelerate:(UIAcceleration *)acceleration;
+@end
+@interface UIAccelerometer : NSObject
++ (UIAccelerometer *)sharedAccelerometer;
+@property NSTimeInterval updateInterval;
+@property (weak) id<UIAccelerometerDelegate> delegate;
+@end
+
 #ifdef __cplusplus
 extern "C" {
 #endif

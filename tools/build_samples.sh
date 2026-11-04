@@ -28,6 +28,9 @@ python3 -I "$root/tools/mknib.py" "$out/NIB Demo.app/Main.nib"
 mkapp "Navigation Demo" NavDemo org.iosrt.sample.nav 12.0 "$root/samples/nav_demo/main.m" $F -framework UIKit -framework CoreGraphics
 mkapp "Web Demo" Web org.iosrt.sample.web 12.0 "$root/samples/web_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_web_bundle.py" "$out/Web Demo.app"
+mkapp "OpenGL ES Demo" GLDemo org.iosrt.sample.gl 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
+mkapp "Web Script Demo" WebJS org.iosrt.sample.webjs 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
+python3 -I "$root/tests/make_webjs_bundle.py" "$out/Web Script Demo.app"
 mkapp "Storyboard Demo" Storyboard org.iosrt.sample.storyboard 12.0 "$root/samples/storyboard_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tools/mknib.py" --storyboard "$out/Storyboard Demo.app/Main.storyboardc"
 python3 -I - "$out/Storyboard Demo.app/Info.plist" <<'PY'
@@ -44,5 +47,7 @@ mkapp "CoreText Demo" CoreTextDemo org.iosrt.sample.coretext 12.0 "$root/samples
 mkapp "ObjC Tour" ObjCTour org.iosrt.sample.objc 10.0 "$root/samples/objc_basics/main.m" $F
 mkapp "Hello C" HelloC org.iosrt.sample.helloc 10.0 "$root/samples/hello_c/main.c"
 mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation
+mkapp "Audio Files Demo" AudioFiles org.iosrt.sample.audiofiles 12.0 "$root/samples/audiofile_demo/main.m" $F -framework UIKit -framework AVFoundation -framework AudioToolbox
+mkapp "Sine 440 Hz (AudioQueue)" AudioQueue org.iosrt.sample.audioqueue 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 mkapp "ObjC Tour (iOS14 chained)" ObjCTour14 org.iosrt.sample.objc14 14.0 --chained "$root/samples/objc_basics/main.m" $F
 echo "samples -> $out"
