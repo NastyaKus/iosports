@@ -1,0 +1,7 @@
+ExtAudioFile write: create 0, write 0, file exists 1
+ExtAudioFile read: open 0, file 22050 Hz 1 ch 16 bit, 11025 frames; as 44.1 kHz stereo float 22050 frames (about twice 1), peak 0.50, channels equal 1
+AudioFile: open 0, 11025 packets, 0.50 s
+AudioConverter: new 0, 22.05 kHz mono int16 -> 48 kHz stereo float: 24000 frames (expected about 24000), peak 0.50
+AVAudioPlayer: created 1 (error 0), duration 0.50 s, 1 channel, volume 0.8, prepared 1, playing 1
+missing file: player 0, error set 1
+system sound: create 0, id set 1

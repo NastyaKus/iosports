@@ -13,6 +13,7 @@ typedef float Float32;
 typedef int16_t SInt16;
 typedef uint64_t UInt64;
 typedef int64_t SInt64;
+typedef int8_t SInt8;
 #ifndef IOSRT_BOOLEAN_DEFINED
 #define IOSRT_BOOLEAN_DEFINED
 typedef unsigned char Boolean;
@@ -75,6 +76,37 @@ OSStatus AudioQueueSetParameter(AudioQueueRef q, AudioQueueParameterID p, Float3
 OSStatus AudioQueueGetParameter(AudioQueueRef q, AudioQueueParameterID p, Float32 *v);
 OSStatus AudioQueueGetCurrentTime(AudioQueueRef q, void *timeline, AudioTimeStamp *ts, Boolean *discontinuity);
 OSStatus AudioQueueGetProperty(AudioQueueRef q, AudioQueuePropertyID p, void *data, UInt32 *size);
+
+/* files and conversion */
+typedef struct OpaqueExtAudioFile *ExtAudioFileRef;
+typedef struct OpaqueAudioFileID *AudioFileID;
+typedef struct OpaqueAudioConverter *AudioConverterRef;
+typedef UInt32 AudioFileTypeID, ExtAudioFilePropertyID, AudioFilePropertyID, AudioConverterPropertyID, SystemSoundID;
+typedef const void *CFURLRefAT;
+enum { kAudioFileCAFType = 'caff', kAudioFileWAVEType = 'WAVE', kAudioFileAIFFType = 'AIFF', kAudioFileM4AType = 'm4af' };
+enum { kAudioFileFlags_EraseFile = 1, kAudioFileReadPermission = 1 };
+enum { kExtAudioFileProperty_FileDataFormat = 'ffmt', kExtAudioFileProperty_ClientDataFormat = 'cfmt', kExtAudioFileProperty_FileLengthFrames = '#frm' };
+enum { kAudioFilePropertyDataFormat = 'dfmt', kAudioFilePropertyAudioDataPacketCount = 'pcnt', kAudioFilePropertyEstimatedDuration = 'edur' };
+enum { kAudioFormatFlagIsBigEndian = 2, kAudioFormatFlagsNativeFloatPacked = 1 | 8 };
+OSStatus ExtAudioFileCreateWithURL(const void *url, AudioFileTypeID type, const AudioStreamBasicDescription *fmt, const void *layout, UInt32 flags, ExtAudioFileRef *out);
+OSStatus ExtAudioFileOpenURL(const void *url, ExtAudioFileRef *out);
+OSStatus ExtAudioFileDispose(ExtAudioFileRef f);
+OSStatus ExtAudioFileRead(ExtAudioFileRef f, UInt32 *ioFrames, AudioBufferList *io);
+OSStatus ExtAudioFileWrite(ExtAudioFileRef f, UInt32 frames, const AudioBufferList *io);
+OSStatus ExtAudioFileSeek(ExtAudioFileRef f, SInt64 frame);
+OSStatus ExtAudioFileGetProperty(ExtAudioFileRef f, ExtAudioFilePropertyID p, UInt32 *size, void *data);
+OSStatus ExtAudioFileSetProperty(ExtAudioFileRef f, ExtAudioFilePropertyID p, UInt32 size, const void *data);
+OSStatus AudioFileOpenURL(const void *url, SInt8 perm, AudioFileTypeID hint, AudioFileID *out);
+OSStatus AudioFileClose(AudioFileID f);
+OSStatus AudioFileGetProperty(AudioFileID f, AudioFilePropertyID p, UInt32 *size, void *data);
+typedef OSStatus (*AudioConverterComplexInputDataProc)(AudioConverterRef c, UInt32 *ioPackets, AudioBufferList *io, AudioStreamPacketDescription **outPD, void *user);
+OSStatus AudioConverterNew(const AudioStreamBasicDescription *in, const AudioStreamBasicDescription *out, AudioConverterRef *conv);
+OSStatus AudioConverterFillComplexBuffer(AudioConverterRef c, AudioConverterComplexInputDataProc proc, void *user, UInt32 *ioPackets, AudioBufferList *out, AudioStreamPacketDescription *pd);
+OSStatus AudioConverterDispose(AudioConverterRef c);
+OSStatus AudioServicesCreateSystemSoundID(const void *url, SystemSoundID *out);
+void AudioServicesPlaySystemSound(SystemSoundID s);
+OSStatus AudioServicesDisposeSystemSoundID(SystemSoundID s);
+void AudioServicesPlaySystemSoundWithCompletion(SystemSoundID s, void (^done)(void));
 #ifdef __cplusplus
 }
 #endif

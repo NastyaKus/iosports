@@ -179,6 +179,23 @@ void iosrt_CFDataGetBytes(id d, NSRange r, uint8_t *out) { const uint8_t *b = rt
 /* -------------------------------------------------------------- URL & misc */
 id iosrt_CFURLCreateWithFileSystemPath(const void *alloc, id path, long style, long dir) { (void)alloc; (void)style; (void)dir; return objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "fileURLWithPath:", id, path)); }
 id iosrt_CFURLCreateWithString(const void *alloc, id s, id base) { (void)alloc; (void)base; return objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "URLWithString:", id, s)); }
+id iosrt_CFURLCreateFromFileSystemRepresentation(const void *alloc, const uint8_t *buf, long len, long dir) {
+    (void)alloc; (void)dir;
+    char *p = strndup((const char *)buf, len > 0 ? (size_t)len : 0);
+    id url = objc_retain(RT_SEND1(id, (id)RT_CLASS(NSURL), "fileURLWithPath:", id, rt_str(p)));
+    free(p); return url;
+}
+id iosrt_CFURLCreateAbsoluteURLWithBytes(const void *alloc, const uint8_t *buf, long len, uint32_t enc, id base, long compat) {
+    (void)alloc; (void)enc; (void)compat;
+    char *p = strndup((const char *)buf, len > 0 ? (size_t)len : 0);
+    id url = RT_SEND2(id, (id)RT_CLASS(NSURL), "URLWithString:relativeToURL:", id, rt_str(p), id, base);
+    free(p);
+    if (url && base) url = RT_SEND0(id, url, "absoluteURL");
+    return objc_retain(url);
+}
+id iosrt_CFURLCreateWithBytes(const void *alloc, const uint8_t *buf, long len, uint32_t enc, id base) { return iosrt_CFURLCreateAbsoluteURLWithBytes(alloc, buf, len, enc, base, 0); }
+/* no proxies configured */
+id iosrt_CFNetworkCopySystemProxySettings(void) { return RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSDictionary"), "alloc"), "init"); }
 rt_bool iosrt_CFURLGetFileSystemRepresentation(id url, long resolve, uint8_t *buf, long max) {
     (void)resolve; if (!url) return 0; const char *p = rt_str_utf8(RT_SEND0(id, url, "path")); size_t n = strlen(p);
     if ((long)n + 1 > max) return 0; memcpy(buf, p, n + 1); return 1;

@@ -1030,6 +1030,7 @@ void rt_foundation_more2_init(void) {
     CM(RT_CLASS(NSURLCache), "sharedURLCache", uc_shared); CM(RT_CLASS(NSURLCache), "setSharedURLCache:", noop_obj);
     IM(RT_CLASS(NSURLCache), "removeAllCachedResponses", noop_obj);
     IM(RT_CLASS(NSURLCache), "initWithMemoryCapacity:diskCapacity:diskPath:", cache_init3);
+    IM(RT_CLASS(NSURLCache), "setDiskCapacity:", noop_long); IM(RT_CLASS(NSURLCache), "setMemoryCapacity:", noop_long);
     IM(RT_CLASS(NSURLCache), "memoryCapacity", cache_cap); IM(RT_CLASS(NSURLCache), "diskCapacity", cache_cap);
     IM(cfg, "setHTTPCookieAcceptPolicy:", noop_long); IM(cfg, "setHTTPShouldSetCookies:", noop_long);
 

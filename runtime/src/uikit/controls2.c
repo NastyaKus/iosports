@@ -181,7 +181,8 @@ static id vc_nextResponder(id self, SEL s) {
     return c->parent;
 }
 static unsigned long vc_orientations(id self, SEL s) { (void)self; (void)s; return 2; }
-static long vc_interfaceOrientation(id self, SEL s) { (void)self; (void)s; return 1; }
+extern int rt_landscape;
+static long vc_interfaceOrientation(id self, SEL s) { (void)self; (void)s; return rt_landscape ? rt_landscape : 1; }
 void rt_vc_appear(id vc, int appear) {
     struct uivc *c = VC(vc);
     if (!vc || (appear && c->appeared) || (!appear && !c->appeared)) return;

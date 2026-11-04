@@ -557,6 +557,7 @@ void rt_foundation_misc_init(void);
 void rt_collections_init(void);
 void rt_blocks_init(void);
 
+static id s_normalized(id self, SEL s) { (void)s; return objc_autorelease(RT_SEND0(id, self, "copy")); }
 void rt_foundation_init(void) {
     Class o = RT_CLASS(NSObject);
     rt_native_class(o, &iosrt_meta_NSObject, "NSObject", NULL, sizeof(void *));
@@ -604,6 +605,9 @@ void rt_foundation_init(void) {
     IM(s, "stringByAppendingString:", s_append); IM(s, "stringByAppendingFormat:", iosrt_imp_stringByAppendingFormat);
     IM(s, "substringFromIndex:", s_substringFromIndex); IM(s, "substringToIndex:", s_substringToIndex);
     IM(s, "substringWithRange:", s_substringWithRange); IM(s, "uppercaseString", s_upper); IM(s, "lowercaseString", s_lower);
+    /* Unicode normalization: strings are kept as given (most app strings are already NFC) */
+    IM(s, "precomposedStringWithCanonicalMapping", s_normalized); IM(s, "decomposedStringWithCanonicalMapping", s_normalized);
+    IM(s, "precomposedStringWithCompatibilityMapping", s_normalized); IM(s, "decomposedStringWithCompatibilityMapping", s_normalized);
     IM(s, "capitalizedString", s_capitalized);
     IM(s, "intValue", s_intValue); IM(s, "integerValue", s_integerValue); IM(s, "longLongValue", s_integerValue);
     IM(s, "doubleValue", s_doubleValue); IM(s, "floatValue", s_floatValue); IM(s, "boolValue", s_boolValue);
@@ -667,6 +671,7 @@ void rt_foundation_init(void) {
     void rt_foundation_more4_init(void); rt_foundation_more4_init();
     void rt_urlio_init(void); rt_urlio_init();
     void rt_archiver_init(void); rt_archiver_init();
+    void rt_xmlparser_init(void); rt_xmlparser_init();
 }
 
 /* performSelector:withObject:afterDelay: -> NSTimer machinery in misc.c */

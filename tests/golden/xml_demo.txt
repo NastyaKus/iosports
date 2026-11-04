@@ -1,0 +1,3 @@
+namespaces: ok 1: start;#[=http://ns.example/air/1.0][x=urn:extra]<application {http://ns.example/air/1.0}><id {http://ns.example/air/1.0}>'com.example.game'</id><name {http://ns.example/air/1.0}>'Gun & Layer ✓'</name><flag {urn:extra} id=7></flag><script {http://ns.example/air/1.0}>'a < b && c'</script></application>end
+plain: ok 1: start;#<application id=(null)><id>'com.example.game'</id><name>'Gun & Layer ✓'</name><x:flag id=7></x:flag><script>'a < b && c'</script></application>end
+malformed: ok 0: start;<a><b>error 76; (parserError 1, domain NSXMLParserErrorDomain)

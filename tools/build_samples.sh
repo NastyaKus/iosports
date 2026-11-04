@@ -47,6 +47,7 @@ mkapp "CoreText Demo" CoreTextDemo org.iosrt.sample.coretext 12.0 "$root/samples
 mkapp "ObjC Tour" ObjCTour org.iosrt.sample.objc 10.0 "$root/samples/objc_basics/main.m" $F
 mkapp "Hello C" HelloC org.iosrt.sample.helloc 10.0 "$root/samples/hello_c/main.c"
 mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/audio_sine/main.m" $F -framework AudioToolbox -framework AVFoundation
+mkapp "Audio Files Demo" AudioFiles org.iosrt.sample.audiofiles 12.0 "$root/samples/audiofile_demo/main.m" $F -framework UIKit -framework AVFoundation -framework AudioToolbox
 mkapp "Sine 440 Hz (AudioQueue)" AudioQueue org.iosrt.sample.audioqueue 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 mkapp "ObjC Tour (iOS14 chained)" ObjCTour14 org.iosrt.sample.objc14 14.0 --chained "$root/samples/objc_basics/main.m" $F
 echo "samples -> $out"
