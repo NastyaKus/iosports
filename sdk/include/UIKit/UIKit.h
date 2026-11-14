@@ -361,6 +361,59 @@ void UIRectFill(CGRect r);
 void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat scale);
 UIImage *UIGraphicsGetImageFromCurrentImageContext(void);
 void UIGraphicsEndImageContext(void);
+/* Auto Layout */
+typedef NS_ENUM(NSInteger, NSLayoutRelation) { NSLayoutRelationLessThanOrEqual = -1, NSLayoutRelationEqual = 0, NSLayoutRelationGreaterThanOrEqual = 1 };
+typedef NS_ENUM(NSInteger, NSLayoutAttribute) {
+    NSLayoutAttributeLeft = 1, NSLayoutAttributeRight, NSLayoutAttributeTop, NSLayoutAttributeBottom, NSLayoutAttributeLeading,
+    NSLayoutAttributeTrailing, NSLayoutAttributeWidth, NSLayoutAttributeHeight, NSLayoutAttributeCenterX, NSLayoutAttributeCenterY,
+    NSLayoutAttributeLastBaseline, NSLayoutAttributeFirstBaseline, NSLayoutAttributeNotAnAttribute = 0 };
+typedef float UILayoutPriority;
+typedef NS_ENUM(NSInteger, UILayoutConstraintAxis) { UILayoutConstraintAxisHorizontal = 0, UILayoutConstraintAxisVertical = 1 };
+@class NSLayoutConstraint;
+@interface NSLayoutAnchor : NSObject
+- (NSLayoutConstraint *)constraintEqualToAnchor:(NSLayoutAnchor *)a;
+- (NSLayoutConstraint *)constraintGreaterThanOrEqualToAnchor:(NSLayoutAnchor *)a;
+- (NSLayoutConstraint *)constraintLessThanOrEqualToAnchor:(NSLayoutAnchor *)a;
+- (NSLayoutConstraint *)constraintEqualToAnchor:(NSLayoutAnchor *)a constant:(CGFloat)c;
+- (NSLayoutConstraint *)constraintGreaterThanOrEqualToAnchor:(NSLayoutAnchor *)a constant:(CGFloat)c;
+- (NSLayoutConstraint *)constraintLessThanOrEqualToAnchor:(NSLayoutAnchor *)a constant:(CGFloat)c;
+@end
+@interface NSLayoutXAxisAnchor : NSLayoutAnchor
+@end
+@interface NSLayoutYAxisAnchor : NSLayoutAnchor
+@end
+@interface NSLayoutDimension : NSLayoutAnchor
+- (NSLayoutConstraint *)constraintEqualToConstant:(CGFloat)c;
+- (NSLayoutConstraint *)constraintGreaterThanOrEqualToConstant:(CGFloat)c;
+- (NSLayoutConstraint *)constraintLessThanOrEqualToConstant:(CGFloat)c;
+- (NSLayoutConstraint *)constraintEqualToAnchor:(NSLayoutDimension *)a multiplier:(CGFloat)m;
+- (NSLayoutConstraint *)constraintEqualToAnchor:(NSLayoutDimension *)a multiplier:(CGFloat)m constant:(CGFloat)c;
+@end
+@interface NSLayoutConstraint : NSObject
++ (instancetype)constraintWithItem:(id)a attribute:(NSLayoutAttribute)a1 relatedBy:(NSLayoutRelation)r toItem:(id)b attribute:(NSLayoutAttribute)a2 multiplier:(CGFloat)m constant:(CGFloat)c;
++ (void)activateConstraints:(NSArray *)cs;
++ (NSArray *)constraintsWithVisualFormat:(NSString *)f options:(NSUInteger)o metrics:(NSDictionary *)m views:(NSDictionary *)v;
++ (void)deactivateConstraints:(NSArray *)cs;
+@property CGFloat constant;
+@property UILayoutPriority priority;
+@property (getter=isActive) BOOL active;
+@property (readonly) CGFloat multiplier;
+@end
+@interface UIView (AutoLayout)
+@property BOOL translatesAutoresizingMaskIntoConstraints;
+@property (readonly) NSArray *constraints;
+@property (readonly) NSLayoutXAxisAnchor *leftAnchor, *rightAnchor, *leadingAnchor, *trailingAnchor, *centerXAnchor;
+@property (readonly) NSLayoutYAxisAnchor *topAnchor, *bottomAnchor, *centerYAnchor, *firstBaselineAnchor, *lastBaselineAnchor;
+@property (readonly) NSLayoutDimension *widthAnchor, *heightAnchor;
+- (void)addConstraint:(NSLayoutConstraint *)c;
+- (void)addConstraints:(NSArray *)cs;
+- (void)removeConstraint:(NSLayoutConstraint *)c;
+- (void)removeConstraints:(NSArray *)cs;
+- (void)layoutIfNeeded;
+- (void)setContentHuggingPriority:(UILayoutPriority)p forAxis:(UILayoutConstraintAxis)a;
+- (void)setContentCompressionResistancePriority:(UILayoutPriority)p forAxis:(UILayoutConstraintAxis)a;
+- (void)invalidateIntrinsicContentSize;
+@end
 NSString *NSStringFromCGRect(CGRect r);
 NSString *NSStringFromCGPoint(CGPoint p);
 #ifdef __cplusplus

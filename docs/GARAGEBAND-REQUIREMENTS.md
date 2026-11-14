@@ -37,11 +37,24 @@ CoreData 13, CoreMIDI 12, and small numbers from ~20 other frameworks.
 After these, the app reaches its run loop and shows the instrument browser (headless trace,
 null GL).
 
-## Still missing for the first screen to look right
+## The first screen
 
-* `Assets.car` (compiled asset catalog): instrument images, backgrounds.
-* Layout details of the instrument carousel.
-* Localised strings in some labels.
+9. `Assets.car`: ~2,900 names / ~6,900 renditions, LZFSE-compressed bitmaps (v1 and v2
+   blocks), LZVN, packed atlases referenced by link renditions, JPEG data renditions.
+10. Auto Layout in NIBs (the first-launch screens and button bars are constraint-based).
+11. Appearance order: content of the first-launch screens is built in `viewWillLayoutSubviews`,
+    and its fade-in animation starts in `viewDidAppear:`.
+12. The screen size: `UILaunchImages~iphone` lists landscape entries with portrait sizes; the
+    app's phone layouts expect at least 568×320 (iPhone 6 size, 667×375, is used).
+13. NIB booleans (`UIHidden`, `UIClipsToBounds`, …): NIBArchive value type 4 is NO, 5 is YES.
+14. `UIButton` title/image edge insets inset the content rect (curated-sound buttons).
+
+Taps go through Welcome → Get Started → the instrument browser; the carousel swipes.
+
+## Still missing on the first screen
+
+* "do not localize" placeholder labels (hidden on iOS by later code paths), Smart Piano icon.
+* `UIMotionEffect` (parallax), `UIStackView`.
 
 ## Later
 

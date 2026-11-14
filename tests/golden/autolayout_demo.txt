@@ -1,0 +1,14 @@
+-- first layout
+box        20,20 130x100
+box2       160,20 140x100
+label      134.5,135 51x24
+bar        60,432 200x8
+follower   155,320 100x10
+va         30,440 60x20
+vb         98,440 192x20
+-- after changes
+box        20,20 130x60
+box2       160,20 140x60
+label      134.5,95 51x24
+follower   45,410 60x10
+constraints on root: 24

@@ -548,7 +548,26 @@ static id unrecognized_imp(id self, SEL sel) {
     rt_guest_exit(71, msg);
 }
 
+/* IOSRT_TRACE_MSG=sel1,sel2: log every send of these selectors (receiver class and pointer) */
+static SEL g_trace_sels[32]; static int g_ntrace = -1;
+static void trace_init(void) {
+    const char *e = getenv("IOSRT_TRACE_MSG"); g_ntrace = 0;
+    if (!e) return;
+    char buf[1024]; snprintf(buf, sizeof buf, "%s", e);
+    for (char *sv = NULL, *t = strtok_r(buf, ",", &sv); t && g_ntrace < 32; t = strtok_r(NULL, ",", &sv)) g_trace_sels[g_ntrace++] = rt_sel(t);
+}
+static void trace_send(Class cls, id self, SEL sel, id *slot) {
+    if (g_ntrace < 0) trace_init();
+    for (int i = 0; i < g_ntrace; i++) if (g_trace_sels[i] == sel) {
+        struct rt_class *rc = rt_cls(cls);
+        /* slot: the receiver saved by objc_msgSend; x2, x3 follow it */
+        rt_warn("msg %c[%s %s] %p args %p %p", (rc->flags & RT_CLS_META) ? '+' : '-', rc->name, sel, (void *)self,
+                slot ? (void *)slot[2] : NULL, slot ? (void *)slot[3] : NULL);
+        return;
+    }
+}
 static IMP lookup_send(Class cls, id self, SEL sel, id *self_slot) {
+    if (g_ntrace) trace_send(cls, self, sel, self_slot);
     struct rt_class *rc = rt_cls(cls);
     if (is_unrealized(cls)) { rt_register_class(cls); rc = rt_cls(cls); }
     if (!(rc->flags & RT_CLS_INITIALIZED)) {

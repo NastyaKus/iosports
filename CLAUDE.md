@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 72/72
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 74/74
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -39,7 +39,9 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 
 Полезные env: `IOSRT_STRICT=0` (lenient, по умолчанию на Android),
 `IOSRT_VERBOSE=1` (бэктрейсы у soft error), `IOSRT_DUMP_CLASS=A,B` (методы классов),
-`IOSRT_HEADLESS_FRAMES`, `IOSRT_SCRIPT`, `IOSRT_PNG_OUT`, `IOSRT_LOG_PLAIN=1`.
+`IOSRT_HEADLESS_FRAMES`, `IOSRT_SCRIPT`, `IOSRT_PNG_OUT`, `IOSRT_LOG_PLAIN=1`,
+`IOSRT_DUMP_VIEWS=1` (дерево view с text/alpha), `IOSRT_TRACE_MSG=sel,...` (только промахи кэша
+методов), `IOSRT_TRACE_KVC=1`, `IOSRT_TRACE_EH=1`. NIBArchive: тип 4 = NO, 5 = YES.
 `ipsw` для анализа собран в `scratchpad/ipsw/ipsw` (`class-dump --arch arm64`).
 
 ## Куда смотреть в коде
@@ -67,6 +69,9 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Исключения C++/ObjC | `abi/unwind.c` (compact unwind, DWARF CFI, LSDA, `__cxa_*`, `objc_exception_throw`), вход в landing pad — `iosrt_uw_install` в `darwin_abi.S`; отладка `IOSRT_TRACE_EH=1` |
 | vDSP / vecLib | `audio/vdsp.c` (FFT с упаковкой Apple), старые — `foundation/more4.c` |
 | Находки по GarageBand | `foundation/more5.c`, `foundation/cf2.c`, `libsystem/extra.c`, `uikit/extras.c` |
+| Assets.car (BOM, renditions, атласы) | `uikit/assets.c` (`rt_asset_image`), распаковка LZFSE/LZVN — `uikit/lzfse.c` |
+| Auto Layout (Cassowary, NIB-констрейнты, VFL, anchors) | `uikit/autolayout.c` (`rt_al_layout_window` из `layout_tree`, `rt_al_decode_view` из `view_initWithCoder`) |
+| Порядок appear (will → layout → did) | `uikit/controls2.c` `rt_vc_appear` |
 
 ## Окружение (контейнер пустой после рестарта)
 
@@ -110,8 +115,9 @@ Help — (100,497); в туториале Next — (284,546), Close — (279,23)
 Первая цель — главный экран (браузер инструментов) с тачами; звук и инструменты — следующая итерация.
 IPA (расшифрованный) — `scratchpad/apps/garageband/x/Payload/MobileGarageBand.app`, агрегаты в
 `docs/GARAGEBAND-REQUIREMENTS.md`. ✅ dylib, ✅ libc++, ✅ исключения, ✅ vDSP: в трассе стартует и
-показывает браузер инструментов. Дальше: Assets.car (`uikit/assets.c` — заглушка), карусель
-карточек, строки, затем Core Data/sqlite, звук инструментов. Трасса GarageBand под qemu ~1 мин;
+показывает браузер инструментов. ✅ Assets.car, ✅ Auto Layout, ✅ экраны первого запуска
+(тапы Continue (333,355) → Use GarageBand (333,355), экран 667×375), карусель листается.
+Дальше: открыть инструмент (Keyboard), Core Data/sqlite, звук инструментов. Трасса GarageBand под qemu ~1 мин;
 `IOSRT_DUMP_VIEWS=1` — дерево view в конце. Разбор бинаря: `scratchpad/tools/{dis,ivars,xref}.py`.
 
 ## План (порядок согласован с Кириллом)

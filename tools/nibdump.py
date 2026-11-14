@@ -33,8 +33,8 @@ def parse(b):
         elif t == 1: v = struct.unpack_from("<h", b, o)[0]; o += 2
         elif t == 2: v = struct.unpack_from("<i", b, o)[0]; o += 4
         elif t == 3: v = struct.unpack_from("<q", b, o)[0]; o += 8
-        elif t == 4: v = True
-        elif t == 5: v = False
+        elif t == 4: v = False
+        elif t == 5: v = True
         elif t == 6: v = struct.unpack_from("<f", b, o)[0]; o += 4
         elif t == 7: v = struct.unpack_from("<d", b, o)[0]; o += 8
         elif t == 8:

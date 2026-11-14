@@ -65,7 +65,7 @@ void rt_button_apply_content(id button, unsigned long state, id content);
 id iosrt_UINibExternalObjects;
 
 /* ================================================================ parser */
-enum { NV_I8, NV_I16, NV_I32, NV_I64, NV_TRUE, NV_FALSE, NV_F32, NV_F64, NV_DATA, NV_NIL, NV_OBJ };
+enum { NV_I8, NV_I16, NV_I32, NV_I64, NV_FALSE, NV_TRUE, NV_F32, NV_F64, NV_DATA, NV_NIL, NV_OBJ };
 struct nval { int key; int type; union { long long i; double d; struct { const uint8_t *p; size_t n; } data; uint32_t obj; } u; };
 struct nobj { int cls, vstart, vcount; };
 struct nibfile {
@@ -546,10 +546,7 @@ static id view_initWithCoder(id self, SEL s, id coder) {
     if (decB(coder, "UIHidden")) RT_SEND1(void, self, "setHidden:", long, 1);
     if (decB(coder, "UIClipsToBounds")) RT_SEND1(void, self, "setClipsToBounds:", long, 1);
     v->autoresizing = decI(coder, "UIAutoresizingMask");
-    /* ibtool writes UIAutoresizeSubviews = NO for nearly every view, yet on iOS such
-     * views still autoresize their children (apps rely on it when a 480pt NIB root
-     * is stretched to a 568pt screen), so the key does not switch autoresizing off. */
-    v->autoresizesSubviews = 1;
+    v->autoresizesSubviews = has(coder, "UIAutoresizeSubviews") ? decB(coder, "UIAutoresizeSubviews") : 1;
     v->contentMode = decI(coder, "UIContentMode");
     v->tag = decI(coder, "UITag");
     if (decB(coder, "UIUserInteractionDisabled")) v->interaction = 0;
@@ -560,6 +557,7 @@ static id view_initWithCoder(id self, SEL s, id coder) {
     id gestures = dec(coder, "gestureRecognizers");
     for (size_t i = 0; gestures && i < rt_array_count(gestures); i++) RT_SEND1(void, self, "addGestureRecognizer:", id, rt_array_at(gestures, i));
     if (has(coder, "UIAccessibilityLabel")) RT_SEND1(void, self, "setAccessibilityLabel:", id, dec(coder, "UIAccessibilityLabel"));
+    void rt_al_decode_view(id view, id coder); rt_al_decode_view(self, coder);   /* constraints, priorities */
     return self;
 }
 static void apply_label(id self, id coder) {

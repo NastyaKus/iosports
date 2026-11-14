@@ -60,6 +60,7 @@ app "$S/coretext_demo" 12.0 "$root/samples/coretext_demo/main.m" $F -framework U
 app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
 app "$S/audioqueue_demo" 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 app "$S/xml_demo" 12.0 "$root/samples/xml_demo/main.m" $F
+app "$S/autolayout_demo" 12.0 "$root/samples/autolayout_demo/main.m" $F -framework UIKit -framework CoreGraphics
 rm -rf "$S/Land.app"; mkdir -p "$S/Land.app"
 app "$S/Land.app/Land" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
 cat > "$S/Land.app/Info.plist" <<PL
@@ -206,6 +207,8 @@ print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h -
     $R "$S/exceptions_demo" >"$T/out.txt" 2>&1; rc=$?
     if [ $rc = 0 ] && diff -u "$root/tests/golden/exceptions_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "exceptions_demo (C++/ObjC throw, catch, cleanups, rethrow, runtime frames)"; else ko "exceptions_demo rc=$rc" "$T/diff.txt"; fi
   fi
+  $R "$S/autolayout_demo" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/autolayout_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "autolayout_demo (constraints, anchors, priorities, intrinsic size, frame-placed views)"; else ko "autolayout_demo rc=$rc" "$T/diff.txt"; fi
   # 4c. embedded framework + dylib through @rpath, plug-in bundle via NSBundle/dlopen, weak C++ coalescing
   $R "$S/DylibDemo.app" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && diff -u "$root/tests/golden/dylib_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "dylib_demo (dyld-info: framework, @rpath dylib, bundle, dlopen/dlsym/dladdr)"; else ko "dylib_demo rc=$rc" "$T/diff.txt"; fi

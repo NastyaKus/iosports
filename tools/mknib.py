@@ -41,9 +41,9 @@ class Nib:
     def string(self, s): return self.obj("NSString", [("NS.bytes", s.encode())])
     def number(self, n): return self.obj("NSNumber", [("NS.intval", int(n))])
     def array(self, items, mutable=True):
-        return self.obj("NSMutableArray" if mutable else "NSArray", [("NSInlinedValue", False)] + [("UINibEncoderEmptyKey", i) for i in items])
+        return self.obj("NSMutableArray" if mutable else "NSArray", [("NSInlinedValue", True)] + [("UINibEncoderEmptyKey", i) for i in items])
     def dictionary(self, pairs):
-        vals = [("NSInlinedValue", False)]
+        vals = [("NSInlinedValue", True)]
         for k, v in pairs: vals += [("UINibEncoderEmptyKey", k), ("UINibEncoderEmptyKey", v)]
         return self.obj("NSMutableDictionary", vals)
     def color(self, r, g, b, a=1.0):
@@ -59,7 +59,7 @@ class Nib:
         return [("UIBounds", b"\x07" + struct.pack("<4d", 0, 0, w, h)), ("UICenter", b"\x07" + struct.pack("<2d", x + w / 2, y + h / 2))]
 
     def view(self, cls, frame, bg=None, subviews=(), mask=0, extra=(), custom_class=None):
-        vals = self.geometry(frame) + [("UIAutoresizingMask", mask), ("UIAutoresizeSubviews", False)]
+        vals = self.geometry(frame) + [("UIAutoresizingMask", mask), ("UIAutoresizeSubviews", True)]
         if bg is not None: vals.append(("UIBackgroundColor", self.color(*bg)))
         if subviews: vals.append(("UISubviews", self.array(list(subviews))))
         vals += list(extra)
@@ -92,7 +92,7 @@ class Nib:
             for k, v in vals:
                 ki = key_index(k)
                 if isinstance(v, Ref): values.append(varint(ki) + bytes([10]) + struct.pack("<I", v.idx))
-                elif isinstance(v, bool): values.append(varint(ki) + bytes([4 if v else 5]))
+                elif isinstance(v, bool): values.append(varint(ki) + bytes([5 if v else 4]))
                 elif isinstance(v, int):
                     if -128 <= v < 128: values.append(varint(ki) + bytes([0]) + struct.pack("<b", v))
                     elif -2**31 <= v < 2**31: values.append(varint(ki) + bytes([2]) + struct.pack("<i", v))

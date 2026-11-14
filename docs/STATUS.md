@@ -3,7 +3,7 @@
 Legend: ✅ works and is covered by automated tests · 🟡 built / implemented but
 not verified on a real Android device · ❌ not implemented
 
-## Verified (tests/run_tests.sh — 72/72 passing)
+## Verified (tests/run_tests.sh — 74/74 passing)
 
 Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 **android-arm64 (bionic, static)** build of the runtime, executed under
@@ -48,7 +48,10 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | CoreText: CTFont, CTLine/CTRun, CTFramesetter/CTFrame, paragraph styles; NSAttributedString with real attribute runs | ✅ | `coretext_demo` |
 | setjmp/longjmp, Mach clock services, BSD hash tables, URL variants of the file APIs, `std::ios_base::Init` | ✅ | `sys_demo` |
 | Compatibility report with a plain-language verdict (Swift, embedded frameworks, OpenGL ES, Core Data, …) | ✅ | report tests; shown by the APK's "Compatibility report" button |
-| iOS compatibility screen for bundles without a launch storyboard (320×480 / 320×568, scaled up) | ✅ | `Counter.app` test |
+| iOS compatibility screen for bundles without a launch storyboard (320×480 up to 375×667 from `UILaunchImages(~iphone)`, scaled up) | ✅ | `Counter.app` test |
+| Auto Layout: Cassowary solver, constraints from NIBs (`UIViewAutolayoutConstraints`, intrinsic size, hugging/compression), `NSLayoutConstraint` API, visual format language, layout anchors, priorities, margins and baselines; solved per window before `layoutSubviews` | ✅ | `autolayout_demo` |
+| Compiled asset catalogs (`Assets.car`): BOM trees, renditions chosen by scale/idiom, LZFSE/LZVN/raw bitmaps, packed atlases, JPEG data renditions; `imageNamed:` and `imageNamed:inBundle:` | 🟡 | GarageBand's images in traces (no own test catalog: Apple's `actool` is needed to make one) |
+| View controller appearance in UIKit order: all `viewWillAppear:`, a layout pass (`viewWillLayoutSubviews` often builds content), then `viewDidAppear:` | ✅ | samples; GarageBand's first-launch screens |
 | Apple-ABI libc++: the whole library (strings, iostreams, locale, regex, threads, chrono, ...) built from LLVM 18.1 sources (`runtime/third_party/libcxx`) with Apple's arm64 choices: `std::__1`, alternate string layout, Darwin-sized threading objects, Darwin `mbstate_t` and ctype masks | ✅ | `cxx_basics` (Android build) |
 | C++ and Objective-C exceptions: two-phase unwinding through guest frames (compact unwind + DWARF CFI), LSDA personality (catch by type, base class, pointer, `...`, rethrow, cleanups), `@try/@catch/@finally`, exceptions raised by the runtime and thrown through runtime frames | ✅ | `exceptions_demo` (Android build) |
 | libdispatch (serial/concurrent queues, groups, sources, after, once), per-thread run loops, `@synchronized` | ✅ | samples + real-app trace |
@@ -76,11 +79,10 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | ❌ Multi-touch (pinch, rotation) | the bridge forwards one pointer |
 | ❌ Networking (`NSURLSession`/`NSURLConnection` fail like an offline device), sockets | online features |
 | ❌ Remote web pages, `WKWebView`, CSS transforms/animations, text input in pages | web-based screens |
-| ❌ Auto Layout (NIB/storyboard frames are used as laid out; constraints are ignored) | modern app UIs on other screen sizes |
+| ❌ `UIStackView`, layout guides beyond margins, size classes | newer Auto Layout UIs |
 | ❌ Swift runtime | modern apps (embedded `libswift*.dylib` are not run yet) |
 | ❌ GLKit (next) | GLKit-based games |
 | ❌ Core Data, sqlite3, NSPredicate evaluation (later phase) | data-driven apps |
-| ❌ Compiled asset catalogs (`Assets.car`) | images of most apps built after 2014 |
 | ❌ 32-bit (armv7) apps | would need CPU emulation (touchHLE's domain) |
 | ❌ FairPlay-encrypted App Store binaries | DRM: only user-decrypted or self-built binaries can run |
 
@@ -100,3 +102,12 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
   (recording starts in its audio engine); its control screen, settings (with
   nested pages), sessions, recordings and HTML help open and navigate; audio
   input is still silent.
+* GarageBand 2.2.2 (see `GARAGEBAND-REQUIREMENTS.md`) starts, shows its first-launch
+  screens (Welcome, Get Started) and, after taps through them, the instrument browser
+  with its images from `Assets.car`; the carousel swipes between instruments.
+  Instruments and sound are the next step.
+
+Debugging aids: `IOSRT_DUMP_VIEWS=1` (view tree with text and alpha at exit),
+`IOSRT_TRACE_MSG=sel1,sel2` (logs the receiver class and first two arguments of
+messages that miss the method cache), `IOSRT_TRACE_KVC=1` (layer `setValue:forKey:`),
+`IOSRT_TRACE_EH=1` (exception unwinding), `IOSRT_WATCHDOG=N`.

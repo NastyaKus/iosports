@@ -52,7 +52,6 @@ RT_DEFINE_CLASS(UIImagePickerController);
 RT_DEFINE_CLASS(UIPickerView);
 RT_DEFINE_CLASS(UIDatePicker);
 RT_DEFINE_CLASS(UIAccessibilityElement);
-RT_DEFINE_CLASS(NSLayoutConstraint);
 RT_DEFINE_CLASS(UIVisualEffectView);
 RT_DEFINE_CLASS(UIBlurEffect);
 RT_DEFINE_CLASS(UIStoryboard);   /* implemented in storyboard.c */
@@ -183,19 +182,34 @@ static id vc_nextResponder(id self, SEL s) {
 static unsigned long vc_orientations(id self, SEL s) { (void)self; (void)s; return 2; }
 extern int rt_landscape;
 static long vc_interfaceOrientation(id self, SEL s) { (void)self; (void)s; return rt_landscape ? rt_landscape : 1; }
-void rt_vc_appear(id vc, int appear) {
+/* UIKit order: every viewWillAppear: (parent first), then a layout pass over
+   the window (viewWillLayoutSubviews often builds content), then every
+   viewDidAppear:. Disappearance mirrors it without the layout. */
+static void vc_appear_will(id vc, int appear, id *done, size_t *nd, size_t cap) {
     struct uivc *c = VC(vc);
     if (!vc || (appear && c->appeared) || (!appear && !c->appeared)) return;
     rt_vc_load_view(vc);
+    rt_log("%s %s", appear ? "appear" : "disappear", rt_class_name(vc->isa));
     if (appear) { RT_SEND1(void, vc, "viewWillAppear:", long, 0); c->appeared = 1; }
     else { RT_SEND1(void, vc, "viewWillDisappear:", long, 0); c->appeared = 0; }
+    if (*nd < cap) done[(*nd)++] = vc;
     /* containment: forward to children whose views are on screen */
     for (size_t i = 0; c->children && i < rt_array_count(c->children); i++) {
         id ch = rt_array_at(c->children, i); id cv = VC(ch)->view;
-        if (!appear || (cv && V(cv)->superview)) rt_vc_appear(ch, appear);
+        if (!appear || (cv && V(cv)->superview)) vc_appear_will(ch, appear, done, nd, cap);
     }
     if (c->view) RT_SEND0(void, c->view, "setNeedsLayout");
-    if (appear) RT_SEND1(void, vc, "viewDidAppear:", long, 0); else RT_SEND1(void, vc, "viewDidDisappear:", long, 0);
+}
+void rt_vc_appear(id vc, int appear) {
+    id done[64]; size_t nd = 0;
+    vc_appear_will(vc, appear, done, &nd, 64);
+    if (!nd) return;
+    id rt_view_window(id v);
+    id view = VC(vc)->view, win = view ? rt_view_window(view) : NULL;
+    if (appear && win) RT_SEND0(void, win, "layoutIfNeeded");
+    for (size_t i = nd; i-- > 0;) {
+        if (appear) RT_SEND1(void, done[i], "viewDidAppear:", long, 0); else RT_SEND1(void, done[i], "viewDidDisappear:", long, 0);
+    }
 }
 static id vc_parent(id self, SEL s) { (void)s; return VC(self)->parent; }
 static id vc_children(id self, SEL s) { (void)s; return VC(self)->children ? VC(self)->children : objc_autorelease(mkarray()); }
@@ -1402,16 +1416,7 @@ static double dp_countdown(id self, SEL s) { (void)s; return ((struct uidate *)s
 static void dp_setCountdown(id self, SEL s, double v) { (void)s; ((struct uidate *)self)->countdown = v; }
 /* accessibility element / constraints / effects / storyboard / traits */
 static id ae_init(id self, SEL s, id container) { (void)s; (void)container; return self; }
-struct nslc { Class isa; double constant, multiplier; long active, priority; id first, second; long a1, a2, rel; };
-static id lc_make(Class c, SEL s, id item, long a1, long rel, id item2, long a2, double mul, double k) {
-    (void)s; id o = rt_alloc_instance(c, 0); struct nslc *x = (struct nslc *)o;
-    x->first = item; x->second = item2; x->a1 = a1; x->a2 = a2; x->rel = rel; x->multiplier = mul; x->constant = k; x->priority = 1000;
-    return objc_autorelease(o);
-}
-static id lc_visual(Class c, SEL s, id fmt, long opts, id metrics, id views) { (void)c; (void)s; (void)fmt; (void)opts; (void)metrics; (void)views; return objc_autorelease(mkarray()); }
-static double lc_constant(id self, SEL s) { (void)s; return ((struct nslc *)self)->constant; }
-static void lc_setConstant(id self, SEL s, double v) { (void)s; ((struct nslc *)self)->constant = v; }
-static void lc_activate(Class c, SEL s, id arr) { (void)c; (void)s; (void)arr; }
+/* NSLayoutConstraint: uikit/autolayout.c */
 static id ve_initWithEffect(id self, SEL s, id effect) { (void)effect; (void)s; self = ((id (*)(id, SEL, CGRect))objc_msgSend)(self, rt_sel("initWithFrame:"), (CGRect){ { 0, 0 }, { 0, 0 } }); RT_SEND1(void, self, "setBackgroundColor:", id, rt_color_make(0.95, 0.95, 0.95, 0.85)); return self; }
 static id ve_contentView(id self, SEL s) { (void)s; return self; }
 static id blur_effect(Class c, SEL s, long style) { (void)s; (void)style; return objc_autorelease(rt_alloc_instance(c, 0)); }
@@ -1660,11 +1665,7 @@ void rt_controls2_init(void) {
     Class ae = RT_CLASS(UIAccessibilityElement);
     IM(ae, "initWithAccessibilityContainer:", ae_init); IM(ae, "setAccessibilityFrame:", nop1); IM(ae, "setAccessibilityLabel:", nop1);
     IM(ae, "setAccessibilityTraits:", nopL); IM(ae, "setAccessibilityValue:", nop1); IM(ae, "setAccessibilityHint:", nop1); IM(ae, "setIsAccessibilityElement:", nopL);
-    NEWCLASS(NSLayoutConstraint, o, sizeof(struct nslc) - sizeof(void *));
-    Class lc = RT_CLASS(NSLayoutConstraint);
-    CM(lc, "constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:", lc_make);
-    CM(lc, "constraintsWithVisualFormat:options:metrics:views:", lc_visual); CM(lc, "activateConstraints:", lc_activate); CM(lc, "deactivateConstraints:", lc_activate);
-    IM(lc, "constant", lc_constant); IM(lc, "setConstant:", lc_setConstant); IM(lc, "setActive:", nopL); IM(lc, "setPriority:", nopL); IM(lc, "setIdentifier:", nop1);
+    { void rt_autolayout_init(void); rt_autolayout_init(); }
     NEWCLASS(UIVisualEffectView, v, 0);
     IM(RT_CLASS(UIVisualEffectView), "initWithEffect:", ve_initWithEffect); IM(RT_CLASS(UIVisualEffectView), "contentView", ve_contentView);
     NEWCLASS(UIBlurEffect, o, 0); CM(RT_CLASS(UIBlurEffect), "effectWithStyle:", blur_effect);

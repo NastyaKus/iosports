@@ -80,7 +80,8 @@ void rt_push_touch_px(int tid, int phase, float x, float y) {
 }
 void iosrt_request_quit(void) { rt_quit_requested = 1; }
 static volatile int dirty = 1;
-void rt_ui_mark_dirty(void) { dirty = 1; }
+void rt_al_invalidate(void);
+void rt_ui_mark_dirty(void) { dirty = 1; rt_al_invalidate(); }   /* geometry or content changed: auto layout re-solves */
 double rt_now(void) { return iosrt_CACurrentMediaTime(); }
 void rt_after(double delay, void (*fn)(void *), void *ctx) { iosrt_dispatch_after_f(iosrt_dispatch_time(0, (int64_t)(delay * 1e9)), iosrt_dispatch_main_q, ctx, fn); }
 static id mkarray(void) { return RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "alloc"), "init"); }
@@ -188,7 +189,9 @@ static id v_initWithFrame(id self, SEL s, CGRect fr) {
 }
 static id v_init(id self, SEL s) { (void)s; return ((id (*)(id, SEL, CGRect))objc_msgSend)(self, rt_sel("initWithFrame:"), (CGRect){ { 0, 0 }, { 0, 0 } }); }
 id rt_view_new(Class c, CGRect frame) { return ((id (*)(id, SEL, CGRect))objc_msgSend)(rt_alloc_instance(c, 0), rt_sel("initWithFrame:"), frame); }
+void rt_al_view_gone(id v);
 static void v_dealloc(id self, SEL s) {
+    rt_al_view_gone(self);
     (void)s; struct uiview *v = V(self);
     for (size_t i = 0; v->subviews && i < rt_array_count(v->subviews); i++) V(rt_array_at(v->subviews, i))->superview = NULL;
     if (v->layer) { RT_SEND1(void, v->layer, "setDelegate:", id, NULL); RT_SEND0(void, v->layer, "removeFromSuperlayer"); }
@@ -242,6 +245,10 @@ static void appearance_for_window(id v, id win) {
     if (uv->vc && ((struct uivc *)uv->vc)->view == v) {
         id vc = uv->vc, parent = ((struct uivc *)vc)->parent;
         if (win && parent && ((struct uivc *)parent)->appeared && !((struct uivc *)vc)->appeared) { rt_vc_appear(vc, 1); return; }
+        /* a controller without a parent whose view the app adds to a visible window directly
+         * (addSubview:, no containment) gets the appearance calls too, as on iOS */
+        if (win && !parent && !((struct uiwindow *)win)->hiddenWin && ((struct uiwindow *)win)->root != vc && !((struct uivc *)vc)->appeared &&
+            !((struct uivc *)vc)->presenting) { rt_vc_appear(vc, 1); return; }
         if (!win && ((struct uivc *)vc)->appeared) { rt_vc_appear(vc, 0); return; }
     }
     id subs = uv->subviews;
@@ -358,7 +365,11 @@ static void v_setNeedsDisplay(id self, SEL s) { (void)s; view_setup(self); RT_SE
 static void v_setNeedsDisplayInRect(id self, SEL s, CGRect r) { (void)r; v_setNeedsDisplay(self, s); }
 static void v_setNeedsLayout(id self, SEL s) { (void)s; V(self)->needsLayout = 1; rt_ui_mark_dirty(); }
 static void layout_tree(id v);
-static void v_layoutIfNeeded(id self, SEL s) { (void)s; layout_tree(self); }
+static void v_layoutIfNeeded(id self, SEL s) {
+    (void)s; void rt_al_layout_window(id win); id rt_view_window(id v);
+    id w = rt_view_window(self); if (w) rt_al_layout_window(w);
+    layout_tree(self);
+}
 static void v_noop(id self, SEL s) { (void)self; (void)s; }
 static void v_noop1(id self, SEL s, id a) { (void)self; (void)s; (void)a; }
 static void v_noopL(id self, SEL s, long a) { (void)self; (void)s; (void)a; }
@@ -481,8 +492,10 @@ void rt_view_layer_resized(id view, CGSize old) {
     if (old.width == 0 && old.height == 0) return;   /* first sizing: NIB/code frames are already final */
     for (size_t i = 0; i < rt_array_count(v->subviews); i++) autoresize(rt_array_at(v->subviews, i), old, nw);
 }
+void rt_al_layout_window(id win);
 static void layout_tree(id view) {
     struct uiview *v = V(view);
+    if (rt_is_kind_of(view, RT_CLASS(UIWindow))) rt_al_layout_window(view);   /* constraints -> frames, before layoutSubviews */
     if (v->needsLayout) {
         v->needsLayout = 0;
         id vc = v->vc;
@@ -580,6 +593,7 @@ static void w_makeKeyAndVisible(id self, SEL s) {
     w_install_root(self);
     w_makeKey(self, s);
     if (w->root && !((struct uivc *)w->root)->appeared) rt_vc_appear(w->root, 1);
+    appearance_for_window(self, self);   /* controllers whose views were added before the window was shown */
 }
 static id w_root(id self, SEL s) { (void)s; return W(self)->root; }
 static void w_setRoot(id self, SEL s, id vc) {
@@ -1121,9 +1135,13 @@ static void run_script(unsigned frame) {
 static void dump_view(id v, int depth) {
     CGRect f = rt_view_frame(v), b = rt_view_bounds(v);
     char line[512];
-    int n = snprintf(line, sizeof line, "%*s%s frame=(%g,%g %gx%g) bounds.origin=(%g,%g) mask=%ld%s%s%s\n", depth * 2, "", rt_class_name(v->isa),
+    double alpha = RT_SEND0(double, v, "alpha");
+    id txt = rt_responds(v, rt_sel("text")) ? RT_SEND0(id, v, "text") : NULL;
+    int n = snprintf(line, sizeof line, "%*s%s frame=(%g,%g %gx%g) bounds.origin=(%g,%g) mask=%ld%s%s%s%s%.40s%s%s\n", depth * 2, "", rt_class_name(v->isa),
                      f.origin.x, f.origin.y, f.size.width, f.size.height, b.origin.x, b.origin.y, V(v)->autoresizing,
-                     v_hidden(v, NULL) ? " hidden" : "", V(v)->vc ? " vc=" : "", V(v)->vc ? rt_class_name(V(v)->vc->isa) : "");
+                     v_hidden(v, NULL) ? " hidden" : "", V(v)->vc ? " vc=" : "", V(v)->vc ? rt_class_name(V(v)->vc->isa) : "",
+                     txt && rt_is_kind_of(txt, rt_class_named("NSString")) ? " text=" : "", txt && rt_is_kind_of(txt, rt_class_named("NSString")) ? rt_str_utf8(txt) : "",
+                     alpha < 0.999 ? " alpha=" : "", alpha < 0.999 ? (alpha < 0.01 ? "0" : "<1") : "");
     rt_out(2, line, (size_t)n);
     for (size_t i = 0; V(v)->subviews && i < rt_array_count(V(v)->subviews); i++) dump_view(rt_array_at(V(v)->subviews, i), depth + 1);
 }
@@ -1207,18 +1225,25 @@ static void choose_compat_screen(void) {
     char plist[4096]; snprintf(plist, sizeof plist, "%s/Info.plist", bdir);
     if (access(plist, F_OK) != 0) return;          /* a bare Mach-O: no launch metadata to go by */
     double bw = 320, bh = 480;
-    id imgs = rt_dict_get(info, rt_str("UILaunchImages"));
+    /* UILaunchImageSize is always the portrait size, whatever the orientation entry says.
+     * Only @2x screens are emulated (up to 375x667): 414x736 would need @3x art. */
+    id imgs = rt_dict_get(info, rt_str("UILaunchImages~iphone"));
+    if (!imgs) imgs = rt_dict_get(info, rt_str("UILaunchImages"));
     for (size_t i = 0; imgs && i < rt_array_count(imgs); i++) {
         id e = rt_array_at(imgs, i);
-        id sz = rt_dict_get(e, rt_str("UILaunchImageSize")), orient = rt_dict_get(e, rt_str("UILaunchImageOrientation"));
-        if (!sz || (orient && strcmp(rt_str_utf8(orient), "Portrait"))) continue;
-        double w = 0, h = 0; sscanf(rt_str_utf8(sz), "{%lf, %lf}", &w, &h);
-        if (w >= 768) continue;                     /* iPad images */
+        id sz = rt_dict_get(e, rt_str("UILaunchImageSize"));
+        if (!sz) continue;
+        double w = 0, h = 0; sscanf(rt_str_utf8(sz), "{%lf,%lf}", &w, &h);
+        if (w > h) { double t = w; w = h; h = t; }
+        if (w >= 768 || h > 667) continue;          /* iPad / @3x images */
         if (h > bh || (h == bh && w > bw)) { bw = w; bh = h; }
     }
     const char *dir = rt_str_utf8(RT_SEND0(id, bundle, "bundlePath"));
-    char p[4096]; snprintf(p, sizeof p, "%s/Default-568h@2x.png", dir);
-    if (bh < 568 && access(p, F_OK) == 0) { bw = 320; bh = 568; }
+    static const char *const d568[] = { "Default-568h@2x.png", "Default-568h@2x~iphone.png" };
+    for (int i = 0; i < 2 && bh < 568; i++) {
+        char p[4096]; snprintf(p, sizeof p, "%s/%s", dir, d568[i]);
+        if (access(p, F_OK) == 0) { bw = 320; bh = 568; }
+    }
     if (rt_landscape) { double t = bw; bw = bh; bh = t; }
     if (bw >= rt_scr_w && bh >= rt_scr_h) return;
     rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);

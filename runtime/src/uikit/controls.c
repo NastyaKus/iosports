@@ -459,9 +459,10 @@ static void draw_button(id view, struct cgctx *c, CGRect b) {
     if (ha == 1 || ha == 4) x0 = inner.origin.x; else if (ha == 2 || ha == 5) x0 = inner.origin.x + inner.size.width - total; else x0 = inner.origin.x + (inner.size.width - total) / 2;
     if (ha == 3 && img && !title) { is = inner.size; x0 = inner.origin.x; }   /* fill */
     if (img) {
-        double y = bt->c.vAlign == 1 ? inner.origin.y : bt->c.vAlign == 2 ? inner.origin.y + inner.size.height - is.height : inner.origin.y + (inner.size.height - is.height) / 2;
-        if (bt->c.vAlign == 3) { y = inner.origin.y; is.height = inner.size.height; }
-        CGRect ir = { { x0 + bt->imageInsets.left - bt->imageInsets.right, y + bt->imageInsets.top - bt->imageInsets.bottom }, is };
+        double iy = inner.origin.y + bt->imageInsets.top, ih = inner.size.height - bt->imageInsets.top - bt->imageInsets.bottom;
+        double y = bt->c.vAlign == 1 ? iy : bt->c.vAlign == 2 ? iy + ih - is.height : iy + (ih - is.height) / 2;
+        if (bt->c.vAlign == 3) { y = iy; is.height = ih; }
+        CGRect ir = { { x0 + bt->imageInsets.left - bt->imageInsets.right, y }, is };
         float tint[4]; rt_color_rgba(rt_view_tint(view), tint);
         rt_uiimage_draw(img, c, ir, 1, bt->type == 1 ? tint : NULL);
     }
@@ -470,7 +471,10 @@ static void draw_button(id view, struct cgctx *c, CGRect b) {
         long align = 1; CGRect tr = inner;
         if (img) { tr.origin.x = x0 + is.width; tr.size.width = ts.width + 1; align = 0; }
         else if (ha == 1 || ha == 4) align = 0; else if (ha == 2 || ha == 5) align = 2;
-        tr.origin.x += bt->titleInsets.left - bt->titleInsets.right; tr.origin.y += bt->titleInsets.top - bt->titleInsets.bottom;
+        /* UIKit insets the title's rect: the text stays centered inside what is left */
+        if (img) tr.origin.x += bt->titleInsets.left - bt->titleInsets.right;
+        else { tr.origin.x += bt->titleInsets.left; tr.size.width -= bt->titleInsets.left + bt->titleInsets.right; }
+        tr.origin.y += bt->titleInsets.top; tr.size.height -= bt->titleInsets.top + bt->titleInsets.bottom;
         long lines = bt->titleLabel ? LB(bt->titleLabel)->lines : 1;
         id shadow = b_shadowColorForState(view, NULL, st);
         (void)shadow;

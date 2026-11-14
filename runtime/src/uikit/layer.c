@@ -724,6 +724,7 @@ static id ly_valueForKey(id self, SEL s, id key) {
 }
 static void ly_setValueForKey(id self, SEL s, id v, id key) {
     struct calayer *l = L(self); const char *k = key ? rt_str_utf8(key) : "";
+    if (getenv("IOSRT_TRACE_KVC")) { char *d = rt_describe(v); rt_warn("layer %p setValue %s forKey %s", (void *)self, d, k); free(d); }
     if (!strcmp(k, "opacity")) { l->opacity = num(v); dirty(); return; }
     if (!strcmp(k, "cornerRadius")) { l->corner = num(v); dirty(); return; }
     if (!strcmp(k, "borderWidth")) { l->borderWidth = num(v); dirty(); return; }
