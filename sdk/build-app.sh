@@ -30,7 +30,7 @@ while [ $# -gt 0 ]; do
     *.mm|*.cpp|*.cc)
       o="$tmp/$(basename "$1").o"
       clang++ -target arm64-apple-ios$ver -std=c++17 $CXXINC -nostdlibinc -isystem "$sdk/include" \
-            -fobjc-arc -fblocks -fobjc-runtime=ios-$ver -fno-exceptions -O1 -g0 -Wall -c "$1" -o "$o"
+            -fobjc-arc -fblocks -fobjc-runtime=ios-$ver -fno-exceptions ${SDK_CXXFLAGS:-} -O1 -g0 -Wall -c "$1" -o "$o"
       objs="$objs $o"; cxx="-lc++"; shift ;;
     *) if [ -f "$1" ]; then libs="$libs $1"; shift; else echo "unknown arg $1" >&2; exit 2; fi ;;
   esac

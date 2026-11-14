@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 71/71
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 72/72
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -63,6 +63,10 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Акселерометр | `motion/motion.c` (UIAccelerometer, CMMotionManager, NDK-датчик), `exports/motion.def` |
 | Отчёт совместимости (`--report`, вердикт) | `run.c` `report_bundle()` |
 | Старый GNU libstdc++ (list, rb-tree, throw) | `cxx/cxx_abi.c`, экспорты в `exports/cxx.def` |
+| Apple libc++ целиком | `third_party/libcxx` (LLVM 18.1 src) + `cxx/include` (`__config_site`, `__external_threading`, `bits/mbstate_t.h`), сборка `tools/build_libcxx.sh`, патч ctype/regex `tools/patch_libcxx_headers.py` |
+| Исключения C++/ObjC | `abi/unwind.c` (compact unwind, DWARF CFI, LSDA, `__cxa_*`, `objc_exception_throw`), вход в landing pad — `iosrt_uw_install` в `darwin_abi.S`; отладка `IOSRT_TRACE_EH=1` |
+| vDSP / vecLib | `audio/vdsp.c` (FFT с упаковкой Apple), старые — `foundation/more4.c` |
+| Находки по GarageBand | `foundation/more5.c`, `foundation/cf2.c`, `libsystem/extra.c`, `uikit/extras.c` |
 
 ## Окружение (контейнер пустой после рестарта)
 
@@ -104,9 +108,11 @@ Help — (100,497); в туториале Next — (284,546), Close — (279,23)
 ## GarageBand 2.2.2 (текущая цель, план: `/root/.claude/plans/floating-questing-pumpkin.md`)
 
 Первая цель — главный экран (браузер инструментов) с тачами; звук и инструменты — следующая итерация.
-Нужен расшифрованный IPA (все бинари с `cryptid=0`), ждём ссылку на Google Drive.
-✅ загрузка dylib/фреймворков. Дальше: раскрутка C++/ObjC исключений, TLV,
-анализ IPA (`--report`), Assets.car (`uikit/assets.c` — пока заглушка), Auto Layout.
+IPA (расшифрованный) — `scratchpad/apps/garageband/x/Payload/MobileGarageBand.app`, агрегаты в
+`docs/GARAGEBAND-REQUIREMENTS.md`. ✅ dylib, ✅ libc++, ✅ исключения, ✅ vDSP: в трассе стартует и
+показывает браузер инструментов. Дальше: Assets.car (`uikit/assets.c` — заглушка), карусель
+карточек, строки, затем Core Data/sqlite, звук инструментов. Трасса GarageBand под qemu ~1 мин;
+`IOSRT_DUMP_VIEWS=1` — дерево view в конце. Разбор бинаря: `scratchpad/tools/{dis,ivars,xref}.py`.
 
 ## План (порядок согласован с Кириллом)
 

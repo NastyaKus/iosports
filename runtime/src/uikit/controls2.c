@@ -1215,6 +1215,8 @@ static void al_show(id self, SEL s) {
     id d = a->delegate;
     if (d && rt_responds(d, rt_sel(a->sheet ? "willPresentActionSheet:" : "willPresentAlertView:"))) RT_SEND1(void, d, a->sheet ? "willPresentActionSheet:" : "willPresentAlertView:", id, self);
     g_prev_key = rt_app_key_window();
+    rt_log("%s shown: \"%s\" - %s", a->sheet ? "action sheet" : "alert", a->title ? rt_str_utf8(RT_SEND0(id, a->title, "description")) : "",
+           a->message ? rt_str_utf8(RT_SEND0(id, a->message, "description")) : "");
     objc_retain(self);   /* a shown alert keeps itself alive until dismissed */
     a->window = build_overlay(self, a->title, a->message, a->buttons, a->cancel, a->destructive, (int)a->sheet, a->fields);
     a->visible = 1;

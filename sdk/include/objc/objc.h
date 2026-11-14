@@ -11,7 +11,11 @@ typedef bool BOOL;
 #define YES ((BOOL)1)
 #define NO ((BOOL)0)
 #ifndef nil
+#ifdef __cplusplus
+#define nil nullptr
+#else
 #define nil ((void *)0)
+#endif
 #endif
 #ifndef Nil
 #define Nil ((void *)0)

@@ -24,13 +24,14 @@ qjs_objs() {   # $1 = compiler, $2 = target, $3 = tag
     done
     echo "$objs"
 }
-CXXINC="-nostdinc++ -isystem $here/src/cxx/include -isystem $TC/sysroot/usr/include/c++/v1"
+CXXINC="-nostdinc++ -isystem $here/src/cxx/include -isystem $out/obj/libcxx_inc -isystem $TC/sysroot/usr/include/c++/v1"
 
-# C++ support objects (Android toolchain) -> regenerate the std::__1 export list
+# C++ support (Android toolchain): libc++ with Apple's ABI + glue -> regenerate the std::__1 export list
+sh "$root/tools/build_libcxx.sh" "$TC" "$out/obj"
 "$TC/bin/clang++" --target=aarch64-linux-android29 -std=c++17 -O2 -g -fno-exceptions $CXXINC \
     -c "$here/src/cxx/cxx_string.cpp" -o "$out/obj/cxx_string.o"
 "$TC/bin/clang" --target=aarch64-linux-android29 $CFLAGS -c "$here/src/cxx/cxx_abi.c" -o "$out/obj/cxx_abi.o"
-python3 -I "$root/tools/gen_cxx_def.py" "$TC/bin/llvm-nm" "$here/src/exports/cxx_gen.def" "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o"
+python3 -I "$root/tools/gen_cxx_def.py" "$TC/bin/llvm-nm" "$here/src/exports/cxx_gen.def" "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" "$out/obj/libcxx_apple.a"
 python3 -I "$root/tools/gen_decls.py" "$here/src/exports" "$out/gen/decls.h"
 
 case $target in
@@ -43,4 +44,4 @@ case $target in
     echo "== building android-arm64"
     QO=$(qjs_objs "$TC/bin/clang" aarch64-linux-android29 android)
     "$TC/bin/clang" --target=aarch64-linux-android29 $CFLAGS -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB $CSRCS $QO \
-        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lz -ldl -lm ;; esac
+        "$out/obj/cxx_string.o" "$out/obj/cxx_abi.o" "$out/obj/libcxx_apple.a" -o "$out/iosrt-run-android-arm64" -static -lc++_static -lc++abi -lz -ldl -lm ;; esac

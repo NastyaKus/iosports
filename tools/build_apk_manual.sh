@@ -16,8 +16,9 @@ rm -rf "$W"; mkdir -p "$W/gen" "$W/lib/arm64-v8a" "$W/classes" "$W/dex" "$W/asse
 echo "== native: libiosrt.so"
 python3 -I "$root/tools/gen_decls.py" "$root/runtime/src/exports" "$W/gen/decls.h"
 SRCS=$(find "$root/runtime/src" -name '*.c' -not -path '*/cxx/*' | sort)
-CXXINC="-nostdinc++ -isystem $root/runtime/src/cxx/include -isystem $TC/sysroot/usr/include/c++/v1"
+CXXINC="-nostdinc++ -isystem $root/runtime/src/cxx/include -isystem $W/libcxx_inc -isystem $TC/sysroot/usr/include/c++/v1"
 # Apple-ABI C++ support (std::__1 with the alternate string layout), linked with a static libc++abi
+sh "$root/tools/build_libcxx.sh" "$TC" "$W"
 "$TC/bin/clang++" --target=aarch64-linux-android29 -fPIC -std=c++17 -O2 -g -fno-exceptions $CXXINC \
     -c "$root/runtime/src/cxx/cxx_string.cpp" -o "$W/cxx_string.o"
 # QuickJS (JavaScript for UIWebView pages)
@@ -30,7 +31,7 @@ done
 "$TC/bin/clang" --target=aarch64-linux-android29 -shared -fPIC -std=gnu11 -O2 -g -fsigned-char \
     -Wall -Wno-unused-parameter -Wno-missing-field-initializers -I"$W/gen" -I"$root/runtime/src/exports" -I"$root/runtime/third_party/quickjs" \
     -DIOSRT_WITH_CXX -DIOSRT_WITH_ZLIB \
-    $SRCS $QOBJS "$root/runtime/src/cxx/cxx_abi.c" "$W/cxx_string.o" "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
+    $SRCS $QOBJS "$root/runtime/src/cxx/cxx_abi.c" "$W/cxx_string.o" "$W/libcxx_apple.a" "$root/runtime/src/abi/darwin_abi.S" -o "$W/lib/arm64-v8a/libiosrt.so" \
     -Wl,-z,max-page-size=16384 -static-libstdc++ -lc++_static -lc++abi -llog -laaudio -lz -ldl -lm
 "$TC/bin/llvm-strip" --strip-debug "$W/lib/arm64-v8a/libiosrt.so"
 

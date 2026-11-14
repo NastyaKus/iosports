@@ -35,6 +35,7 @@ DVAR iosrt_tramp_openat,    iosrt_darwin_openat,    x3
 DVAR iosrt_tramp_fcntl,     iosrt_darwin_fcntl,     x2
 DVAR iosrt_tramp_ioctl,     iosrt_darwin_ioctl,     x2
 DVAR iosrt_tramp_sscanf,    iosrt_darwin_sscanf,    x2
+DVAR iosrt_tramp_fscanf,    iosrt_darwin_fscanf,    x2
 /* Foundation / CoreFoundation C functions */
 DVAR iosrt_tramp_NSLog,     iosrt_darwin_NSLog,     x1
 DVAR iosrt_tramp_CFStringCreateWithFormat, iosrt_darwin_CFStringCreateWithFormat, x3
@@ -283,6 +284,32 @@ iosrt_msgForward:
     ldp x29, x30, [sp], #16
     ret
     .size iosrt_msgForward, . - iosrt_msgForward
+
+
+/* iosrt_uw_install(const struct uctx *c): enter a landing pad (abi/unwind.c) with the
+ * unwound frame's callee-saved registers, sp and pc; x0/x1 carry the exception and selector */
+    .text
+    .globl iosrt_uw_install
+    .type iosrt_uw_install, %function
+    .p2align 2
+iosrt_uw_install:
+    mov x16, x0
+    ldp d8, d9, [x16, #264]
+    ldp d10, d11, [x16, #280]
+    ldp d12, d13, [x16, #296]
+    ldp d14, d15, [x16, #312]
+    ldp x19, x20, [x16, #152]
+    ldp x21, x22, [x16, #168]
+    ldp x23, x24, [x16, #184]
+    ldp x25, x26, [x16, #200]
+    ldp x27, x28, [x16, #216]
+    ldp x29, x30, [x16, #232]
+    ldp x0, x1, [x16, #0]
+    ldr x17, [x16, #248]
+    mov sp, x17
+    ldr x17, [x16, #256]
+    br x17
+    .size iosrt_uw_install, .-iosrt_uw_install
 
     .section .note.GNU-stack,"",%progbits
 

@@ -691,7 +691,8 @@ struct rloop {
     struct rl_item *head, *tail;
     struct rloop *next_all;
 };
-struct nstimer { Class isa; double fire, interval; long repeats, valid; id target; SEL sel; id userInfo; void *block; };
+struct nstimer { Class isa; double fire, interval; long repeats, valid; id target; SEL sel; id userInfo; void *block;
+                 void (*cf_callout)(id, void *); void *cf_info; void (*cf_release)(const void *); };
 static pthread_mutex_t rl_all_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t rl_done_cond = PTHREAD_COND_INITIALIZER;
 static struct rloop *rl_all, *g_main_rl;
@@ -813,10 +814,11 @@ static id tm_userInfo(id self, SEL s) { (void)s; return ((struct nstimer *)self)
 static double tm_interval(id self, SEL s) { (void)s; return ((struct nstimer *)self)->interval; }
 static void tm_fire(id self, SEL s) {
     (void)s; struct nstimer *t = (struct nstimer *)self;
-    if (t->block) ((void (*)(void *, id))((struct rt_block *)t->block)->invoke)(t->block, self);
+    if (t->cf_callout) t->cf_callout(self, t->cf_info);
+    else if (t->block) ((void (*)(void *, id))((struct rt_block *)t->block)->invoke)(t->block, self);
     else if (t->target) ((void (*)(id, SEL, id))objc_msgSend)(t->target, t->sel, self);
 }
-static void tm_dealloc(id self, SEL s) { (void)s; struct nstimer *t = (struct nstimer *)self; objc_release(t->target); objc_release(t->userInfo); if (t->block) _Block_release(t->block); rt_dealloc_instance(self); }
+static void tm_dealloc(id self, SEL s) { (void)s; struct nstimer *t = (struct nstimer *)self; if (t->cf_release) t->cf_release(t->cf_info); objc_release(t->target); objc_release(t->userInfo); if (t->block) _Block_release(t->block); rt_dealloc_instance(self); }
 /* -performSelector:withObject:afterDelay: — a one-shot timer on the current thread's loop */
 void rt_schedule_perform(id target, SEL sel, id arg, double delay) {
     id t = timer_make(NULL, delay, NULL, NULL, NULL, 0, NULL);
@@ -1121,6 +1123,24 @@ const void *iosrt_CFArrayGetValueAtIndex(const void *a, long i) { return RT_SEND
 const void *iosrt_CFDictionaryGetValue(const void *d, const void *k) { return rt_dict_get((id)d, (id)k); }
 void *iosrt_CFRunLoopGetMain(void) { return main_rl(); }
 void *iosrt_CFRunLoopGetCurrent(void) { return rl_current_loop(); }
+/* CFRunLoopTimer is toll-free bridged with NSTimer: the callout and info live in the timer */
+struct cf_timer_ctx { long version; void *info; const void *(*retain)(const void *); void (*release)(const void *); void *desc; };
+id iosrt_CFRunLoopTimerCreate(void *alloc, double fireDate, double interval, unsigned long flags, long order, void *callout, struct cf_timer_ctx *ctx) {
+    (void)alloc; (void)flags; (void)order;
+    id r = rt_alloc_instance(RT_CLASS(NSTimer), 0); struct nstimer *t = (struct nstimer *)r;
+    t->interval = interval > 0 ? interval : 0; t->repeats = interval > 0; t->valid = 1; t->fire = fireDate;
+    t->cf_callout = (void (*)(id, void *))callout;
+    if (ctx) { t->cf_info = ctx->retain ? (void *)ctx->retain(ctx->info) : ctx->info; t->cf_release = ctx->release; }
+    return r;   /* +1 */
+}
+void iosrt_CFRunLoopAddTimer(void *rl, id timer, id mode) { (void)mode; if (timer) rl_add_timer(rl ? rl : rl_current_loop(), timer); }
+void iosrt_CFRunLoopRemoveTimer(void *rl, id timer, id mode) { (void)rl; (void)mode; if (timer) ((struct nstimer *)timer)->valid = 0; }
+void iosrt_CFRunLoopTimerInvalidate(id timer) { if (timer) ((struct nstimer *)timer)->valid = 0; }
+long iosrt_CFRunLoopTimerIsValid(id timer) { return timer && ((struct nstimer *)timer)->valid; }
+void iosrt_CFRunLoopTimerSetTolerance(id timer, double tol) { (void)timer; (void)tol; }
+void iosrt_CFRunLoopTimerSetNextFireDate(id timer, double d) { if (timer) ((struct nstimer *)timer)->fire = d; }
+double iosrt_CFRunLoopTimerGetNextFireDate(id timer) { return timer ? ((struct nstimer *)timer)->fire : 0; }
+double iosrt_CFRunLoopTimerGetInterval(id timer) { return timer ? ((struct nstimer *)timer)->interval : 0; }
 void iosrt_CFRunLoopRun(void) { runloop_until(rl_current_loop(), 1e18); }
 void iosrt_CFRunLoopStop(void *rl) { struct rloop *r = rl ? rl : main_rl(); r->stop = 1; if (r->is_main) runloop_stop = 1; rl_wake(r); }
 void iosrt_CFRunLoopWakeUp(void *rl) { if (rl) rl_wake(rl); }

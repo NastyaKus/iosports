@@ -105,6 +105,14 @@ int iosrt_darwin_sscanf(const char *str, const char *fmt, const uint64_t *args) 
                   (void *)args[4], (void *)args[5], (void *)args[6], (void *)args[7]);
 }
 
+int iosrt_darwin_fscanf(FILE *f, const char *fmt, const uint64_t *args) {
+    return fscanf(f, fmt, (void *)args[0], (void *)args[1], (void *)args[2], (void *)args[3],
+                  (void *)args[4], (void *)args[5], (void *)args[6], (void *)args[7]);
+}
+/* v*scanf: a Darwin va_list is a pointer to the 8-byte argument slots */
+int iosrt_vsscanf(const char *str, const char *fmt, const uint64_t *args) { return iosrt_darwin_sscanf(str, fmt, args); }
+int iosrt_vfscanf(FILE *f, const char *fmt, const uint64_t *args) { return iosrt_darwin_fscanf(f, fmt, args); }
+
 int iosrt_puts(const char *s) { rt_out(1, s, strlen(s)); rt_out(1, "\n", 1); return 1; }
 int iosrt_putchar(int c) { char ch = (char)c; rt_out(1, &ch, 1); return c & 0xff; }
 int iosrt_fputs(const char *s, FILE *f) { write_file(f, s, strlen(s)); return 1; }
@@ -228,25 +236,123 @@ long iosrt_sysconf(int name) {
     default: darwin_errno = EINVAL; return -1;
     }
 }
+/* ------------------------------------------------------ sysctl / ledger */
+/* memory as an iOS app sees it: total RAM, the share that is free (iOS's
+ * kern.memorystatus_level), and this process's footprint */
+static long long mem_total(void) { return (long long)sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGESIZE); }
+static long meminfo_kb(const char *key) {
+    FILE *f = fopen("/proc/meminfo", "r"); char line[256]; long v = -1; size_t k = strlen(key);
+    while (f && fgets(line, sizeof line, f)) if (!strncmp(line, key, k) && line[k] == ':') { v = atol(line + k + 1); break; }
+    if (f) fclose(f);
+    return v;
+}
+static int mem_free_percent(void) {
+    long tot = meminfo_kb("MemTotal"), avail = meminfo_kb("MemAvailable");
+    if (tot <= 0 || avail < 0) return 50;
+    int p = (int)(avail * 100 / tot);
+    return p < 1 ? 1 : p > 100 ? 100 : p;
+}
+long long rt_process_footprint(void) {
+    FILE *f = fopen("/proc/self/statm", "r"); long size = 0, res = 0;
+    if (f) { if (fscanf(f, "%ld %ld", &size, &res) != 2) res = 0; fclose(f); }
+    return (long long)res * sysconf(_SC_PAGESIZE);
+}
+/* the device model the runtime reports everywhere (UIDevice, uname, sysctl) */
+#define IOS_MACHINE "iPhone10,3"
+#define IOS_MODEL "D22AP"
+static int sysctl_value(const char *name, const char **sval, long long *ival, int *size) {
+    *sval = NULL; *size = 4;
+    if (!strcmp(name, "hw.machine")) *sval = IOS_MACHINE;
+    else if (!strcmp(name, "hw.model")) *sval = IOS_MODEL;
+    else if (!strcmp(name, "kern.osversion")) *sval = "15E148";
+    else if (!strcmp(name, "kern.osrelease")) *sval = "17.5.0";
+    else if (!strcmp(name, "kern.ostype")) *sval = "Darwin";
+    else if (!strcmp(name, "kern.hostname")) *sval = "iPhone";
+    else if (!strcmp(name, "kern.version")) *sval = "Darwin Kernel Version 17.5.0: iosrt; root:xnu/RELEASE_ARM64_T8015";
+    else if (!strcmp(name, "hw.ncpu") || !strcmp(name, "hw.logicalcpu") || !strcmp(name, "hw.activecpu") ||
+             !strcmp(name, "hw.physicalcpu") || !strcmp(name, "hw.logicalcpu_max") || !strcmp(name, "hw.physicalcpu_max")) *ival = sysconf(_SC_NPROCESSORS_ONLN);
+    else if (!strcmp(name, "hw.memsize")) { *ival = mem_total(); *size = 8; }
+    else if (!strcmp(name, "hw.physmem") || !strcmp(name, "hw.usermem")) { long long m = mem_total(); *ival = m > 0xC0000000LL ? 0xC0000000LL : m; }
+    else if (!strcmp(name, "hw.pagesize")) { *ival = 16384; *size = 8; }
+    else if (!strcmp(name, "hw.cachelinesize")) { *ival = 64; *size = 8; }
+    else if (!strcmp(name, "hw.l1icachesize") || !strcmp(name, "hw.l1dcachesize")) { *ival = 65536; *size = 8; }
+    else if (!strcmp(name, "hw.l2cachesize")) { *ival = 8 << 20; *size = 8; }
+    else if (!strcmp(name, "hw.cputype")) *ival = 0x0100000c;          /* CPU_TYPE_ARM64 */
+    else if (!strcmp(name, "hw.cpusubtype")) *ival = 0;                /* CPU_SUBTYPE_ARM64_ALL */
+    else if (!strcmp(name, "hw.cpufamily")) *ival = (int)0xe81e7ef6;   /* A11 */
+    else if (!strcmp(name, "hw.cpu64bit_capable") || !strcmp(name, "hw.optional.neon") || !strcmp(name, "hw.optional.floatingpoint")) *ival = 1;
+    else if (!strcmp(name, "hw.cpufrequency") || !strcmp(name, "hw.cpufrequency_max")) { *ival = 2390000000LL; *size = 8; }
+    else if (!strcmp(name, "hw.tbfrequency")) { *ival = 24000000; *size = 8; }
+    else if (!strcmp(name, "kern.memorystatus_level")) *ival = mem_free_percent();
+    else if (!strcmp(name, "kern.maxfiles") || !strcmp(name, "kern.maxfilesperproc")) *ival = 10240;
+    else if (!strcmp(name, "kern.maxproc")) *ival = 2000;
+    else return -1;
+    return 0;
+}
+static int sysctl_copy(const char *sval, long long ival, int size, void *old, size_t *oldlen) {
+    size_t n = sval ? strlen(sval) + 1 : (size_t)size;
+    if (old && oldlen) {
+        if (*oldlen < n) { *oldlen = n; darwin_errno = 12; return -1; }    /* ENOMEM */
+        if (sval) memcpy(old, sval, n);
+        else if (size == 8) memcpy(old, &ival, 8);
+        else { int v = (int)ival; memcpy(old, &v, 4); }
+    }
+    if (oldlen) *oldlen = n;
+    return 0;
+}
 int iosrt_sysctlbyname(const char *name, void *old, size_t *oldlen, const void *nw, size_t nwlen) {
     (void)nw; (void)nwlen;
-    const char *sval = NULL; long ival = 0; int isint = 0;
-    if (!strcmp(name, "hw.machine")) sval = "iPhone10,3";
-    else if (!strcmp(name, "hw.model")) sval = "D22AP";
-    else if (!strcmp(name, "kern.osversion")) sval = "15E148";
-    else if (!strcmp(name, "hw.ncpu") || !strcmp(name, "hw.logicalcpu") || !strcmp(name, "hw.activecpu")) { isint = 1; ival = sysconf(_SC_NPROCESSORS_ONLN); }
-    else if (!strcmp(name, "hw.memsize")) { isint = 2; ival = (long)sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGESIZE); }
-    else { darwin_errno = 2; return -1; }
-    if (sval) {
-        size_t n = strlen(sval) + 1;
-        if (old && oldlen && *oldlen >= n) memcpy(old, sval, n);
-        if (oldlen) *oldlen = n;
-    } else {
-        size_t n = isint == 2 ? 8 : 4;
-        if (old && oldlen && *oldlen >= n) { if (n == 8) memcpy(old, &ival, 8); else { int v = (int)ival; memcpy(old, &v, 4); } }
-        if (oldlen) *oldlen = n;
+    const char *sval; long long ival = 0; int size;
+    if (!name || sysctl_value(name, &sval, &ival, &size)) { darwin_errno = 2; return -1; }
+    return sysctl_copy(sval, ival, size, old, oldlen);
+}
+/* sysctl by MIB: the CTL_HW / CTL_KERN numbers of <sys/sysctl.h> mapped to the names above */
+int iosrt_sysctl(int *mib, unsigned n, void *old, size_t *oldlen, void *nw, size_t nwlen) {
+    if (!mib || n < 2) { darwin_errno = 22; return -1; }
+    static const char *hw[] = { [1] = "hw.machine", [2] = "hw.model", [3] = "hw.ncpu", [5] = "hw.physmem", [6] = "hw.usermem",
+                                [7] = "hw.pagesize", [13] = "hw.cachelinesize", [15] = "hw.cpufrequency", [17] = "hw.l1icachesize",
+                                [18] = "hw.l1dcachesize", [20] = "hw.l2cachesize", [23] = "hw.tbfrequency", [24] = "hw.memsize", [25] = "hw.ncpu" };
+    static const char *kern[] = { [1] = "kern.ostype", [2] = "kern.osrelease", [4] = "kern.version", [6] = "kern.maxproc",
+                                  [7] = "kern.maxfiles", [10] = "kern.hostname", [29] = "kern.maxfilesperproc", [65] = "kern.osversion" };
+    const char *name = NULL;
+    if (mib[0] == 6 && mib[1] > 0 && (size_t)mib[1] < sizeof hw / sizeof *hw) name = hw[mib[1]];
+    else if (mib[0] == 1 && mib[1] > 0 && (size_t)mib[1] < sizeof kern / sizeof *kern) name = kern[mib[1]];
+    if (!name || n != 2) {
+        if (rt_first_time("sysctl-mib")) rt_log("sysctl {%d, %d%s} is not provided", mib[0], mib[1], n > 2 ? ", ..." : "");
+        if (oldlen) *oldlen = 0;
+        darwin_errno = 2; return -1;
     }
-    return 0;
+    return iosrt_sysctlbyname(name, old, oldlen, nw, nwlen);
+}
+/* ledger(2), the private call behind task footprint numbers: one ledger with the
+ * entries "phys_footprint" and "phys_mem", both this process's resident memory */
+struct darwin_ledger_info { char name[32]; int64_t id; int64_t entries; };
+struct darwin_ledger_template { char name[32], group[32], units[32]; };
+struct darwin_ledger_entry { int64_t balance, credit, debit, limit, refill_period, last_refill; };
+int iosrt_ledger(int cmd, void *a1, void *a2, void *a3) {
+    static const char *names[] = { "phys_footprint", "phys_mem" };
+    const int count = 2;
+    switch (cmd) {
+    case 0: {   /* LEDGER_INFO(pid, info) */
+        struct darwin_ledger_info *li = a2; if (!li) break;
+        memset(li, 0, sizeof *li); strcpy(li->name, "iosrt"); li->entries = count;
+        return 0;
+    }
+    case 2: {   /* LEDGER_TEMPLATE_INFO(buf, &count) */
+        struct darwin_ledger_template *t = a1; int *len = a2; if (!t || !len) break;
+        int k = *len < count ? *len : count;
+        for (int i = 0; i < k; i++) { memset(&t[i], 0, sizeof t[i]); strcpy(t[i].name, names[i]); strcpy(t[i].group, "physmem"); strcpy(t[i].units, "bytes"); }
+        *len = k; return 0;
+    }
+    case 1: {   /* LEDGER_ENTRY_INFO(pid, buf, &count) */
+        struct darwin_ledger_entry *e = a2; int *len = a3; if (!e || !len) break;
+        int k = *len < count ? *len : count; long long fp = rt_process_footprint();
+        for (int i = 0; i < k; i++) { memset(&e[i], 0, sizeof e[i]); e[i].balance = fp; e[i].credit = fp; e[i].limit = INT64_MAX; }
+        *len = k; return 0;
+    }
+    default: break;
+    }
+    darwin_errno = 22; return -1;
 }
 
 /* ------------------------------------------------------------ time */
@@ -733,14 +839,7 @@ uint32_t iosrt_mach_task_self_ = 0x103;
 unsigned long iosrt_vm_page_size = 16384;
 int iosrt_pthread_attr_setdetachstate(pthread_attr_t *a, int st) { return pthread_attr_setdetachstate(a, st == 2 ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE); }
 int iosrt_pthread_setschedparam(pthread_t t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
-_Noreturn void iosrt_unwind_resume(void *exc) { (void)exc; rt_guest_exit(72, "exception unwinding (_Unwind_Resume) is not supported"); }
-void iosrt_cxx_throw(void *obj, void *tinfo, void (*dest)(void *)) __attribute__((weak));
-_Noreturn void iosrt_cxa_throw(void *exc, void *type, void (*dtor)(void *)) {
-    if (iosrt_cxx_throw) iosrt_cxx_throw(exc, type, dtor);      /* richer message when C++ support is linked */
-    rt_guest_exit(72, "uncaught C++ exception (exception unwinding is not supported yet)");
-}
-_Noreturn void iosrt_cxa_rethrow(void) { rt_guest_exit(72, "C++ rethrow (exception unwinding is not supported yet)"); }
-_Noreturn void iosrt_terminate(void) { rt_guest_exit(134, "std::terminate called"); }
+/* __cxa_throw, _Unwind_Resume, std::terminate: abi/unwind.c */
 
 /* ------------------------------------------- libdispatch: more of the API */
 struct qspec { struct rt_queue *q; const void *key; void *val; };

@@ -127,10 +127,22 @@ static int looks_like_data(const char *n) {
 #define DATA_REGION (4u << 20)
 static uint8_t *data_region; static size_t data_used;
 static struct { uintptr_t a; const char *name; } *data_names; static size_t ndata_names, capdata_names;
+/* Missing string constants (notification names, dictionary keys, error domains...) get an
+ * NSString with the symbol's own name, as most of them have on iOS: a nil name would make
+ * an observer receive every notification, and a nil key would not work in a dictionary. */
+static int string_constant(const char *n) {
+    if (!strncmp(n, "_OBJC_", 6) || !strncmp(n, "__", 2)) return 0;
+    static const char *suf[] = { "Notification", "Key", "Domain", "Exception", "AttributeName", "Mode", "Category",
+                                 "Option", "Identifier", "Name", "Format", "Style", NULL };
+    size_t L = strlen(n);
+    for (int i = 0; suf[i]; i++) { size_t sl = strlen(suf[i]); if (L > sl && !strcmp(n + L - sl, suf[i])) return 1; }
+    return 0;
+}
 static void *make_data_stub(const char *name) {
     if (!data_region) data_region = mmap(NULL, DATA_REGION, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (data_region == MAP_FAILED || data_used + 256 > DATA_REGION) return rt_xcalloc(1, 256);
     void *p = data_region + data_used; data_used += 256;
+    if (string_constant(name)) { id str = rt_str_new(name + 1); memcpy(p, &str, sizeof str); }
     if (ndata_names == capdata_names) { capdata_names = capdata_names ? capdata_names * 2 : 64; data_names = realloc(data_names, capdata_names * sizeof *data_names); }
     data_names[ndata_names].a = (uintptr_t)p; data_names[ndata_names++].name = rt_xstrdup(name);
     return p;

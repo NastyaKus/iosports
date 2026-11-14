@@ -1240,13 +1240,16 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
     if (!sbName && info) sbName = rt_dict_get(info, rt_str("UIMainStoryboardFile"));
     if (dc) delegate = RT_SEND0(id, RT_SEND0(id, (id)dc, "alloc"), "init");
     else if (sbName) delegate = RT_SEND0(id, RT_SEND0(id, (id)RT_CLASS(NSObject), "alloc"), "init");
-    else {
-        /* storyboard/NIB launch: NSMainNibFile loads the window and delegate (outlets wire it up) */
-        id nibName = RT_SEND1(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", id, rt_str("NSMainNibFile"));
+    if (!sbName) {
+        /* NSMainNibFile is loaded with the application as File's Owner, whether or not main()
+         * named a delegate class: it usually holds the window (and may connect the delegate) */
+        id nibName = RT_SEND1(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", id, rt_str("NSMainNibFile~iphone"));
+        if (!nibName) nibName = RT_SEND1(id, RT_SEND0(id, (id)rt_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", id, rt_str("NSMainNibFile"));
         const char *path = nibName ? rt_nib_find(rt_str_utf8(nibName), NULL) : NULL;
+        if (delegate) ((struct uiapp *)app)->delegate = delegate;   /* outlets to the delegate find it */
         /* like UIKit, keep the main nib's top-level objects (the delegate among them) for the app's lifetime */
         if (path) g_main_nib_objects = objc_retain(rt_nib_instantiate(path, app, NULL));
-        delegate = ((struct uiapp *)app)->delegate;
+        if (((struct uiapp *)app)->delegate) delegate = ((struct uiapp *)app)->delegate;
         if (!delegate) rt_guest_exit(75, "UIApplicationMain: no app delegate class (storyboards are not supported)");
     }
     app_setDelegate(app, NULL, delegate);
@@ -1617,4 +1620,5 @@ void rt_uikit_init(void) {
     K(UIImagePickerControllerOriginalImage, "UIImagePickerControllerOriginalImage") K(UIImagePickerControllerCropRect, "UIImagePickerControllerCropRect")
     K(UIImagePickerControllerEditedImage, "UIImagePickerControllerEditedImage") K(UIImagePickerControllerMediaURL, "UIImagePickerControllerMediaURL")
 #undef K
+    { void rt_uikit_extras_init(void); rt_uikit_extras_init(); }
 }

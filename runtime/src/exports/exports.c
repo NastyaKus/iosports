@@ -17,6 +17,10 @@
 #include <sys/time.h>
 #include <sched.h>
 #include <poll.h>
+#include <strings.h>
+#include <wchar.h>
+#include <sys/uio.h>
+#include <utime.h>
 #ifdef IOSRT_WITH_ZLIB
 #include <zlib.h>
 #endif

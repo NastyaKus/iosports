@@ -362,27 +362,7 @@ static void blk_release(id self, SEL s) { (void)s; _Block_release(self); }
 static id blk_autorelease(id self, SEL s) { (void)s; return objc_autorelease(self); }
 static void blk_invoke(id self, SEL s) { (void)s; ((void (*)(void *))((struct rt_block *)self)->invoke)(self); }
 
-/* -------------------------------------------------------- exceptions */
-void rt_print_backtrace(void);
-extern void *iosrt_uncaught_handler;
-_Noreturn void objc_exception_throw(id exc) {
-    rt_print_backtrace();
-    if (iosrt_uncaught_handler) { void *h = iosrt_uncaught_handler; iosrt_uncaught_handler = NULL; ((void (*)(id))h)(exc); }
-    char *d = rt_describe(exc);
-    char msg[1024];
-    id name = rt_responds(exc, rt_sel("name")) ? RT_SEND0(id, exc, "name") : NULL;
-    id reason = rt_responds(exc, rt_sel("reason")) ? RT_SEND0(id, exc, "reason") : NULL;
-    if (name || reason) snprintf(msg, sizeof msg, "uncaught exception '%s', reason: '%s' (exception unwinding is not supported)",
-                                 name ? rt_str_utf8(name) : "?", reason ? rt_str_utf8(reason) : "?");
-    else snprintf(msg, sizeof msg, "uncaught exception: %s (exception unwinding is not supported)", d);
-    free(d);
-    rt_guest_exit(72, msg);
-}
-_Noreturn void objc_exception_rethrow(void) { rt_guest_exit(72, "objc_exception_rethrow"); }
-id objc_begin_catch(void *e) { return (id)e; }
-void objc_end_catch(void) {}
-_Noreturn void objc_terminate(void) { rt_guest_exit(134, "objc_terminate"); }
-void iosrt_objc_personality(void) { rt_guest_exit(72, "exception personality routine invoked"); }
+/* exceptions: abi/unwind.c */
 _Noreturn void objc_enumerationMutation(id o) { (void)o; rt_guest_exit(73, "collection was mutated while being enumerated"); }
 
 /* ------------------------------------------------------------ C API */

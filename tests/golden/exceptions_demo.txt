@@ -1,0 +1,16 @@
+1 caught int 7, dtors=5
+2 caught Leaf via Base&
+3 caught std::exception: boom
+4 caught Leaf via Mid*
+5 caught Multi via second base, tag=1
+6 caught (...)
+7 inner 7, rethrowing
+7 outer 7
+8 caught from handler
+9 caught DemoException: objc throw
+9 finally
+10 caught RuntimeRaise: value 5
+11 caught InBlock through the runtime
+12 inner finally
+12 caught id a string
+done

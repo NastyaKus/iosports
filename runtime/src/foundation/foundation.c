@@ -669,6 +669,8 @@ void rt_foundation_init(void) {
     void rt_stubs_init(void); rt_stubs_init();
     void rt_foundation_more3_init(void); rt_foundation_more3_init();
     void rt_foundation_more4_init(void); rt_foundation_more4_init();
+    void rt_foundation_more5_init(void); rt_foundation_more5_init();
+    void rt_cf2_init(void); rt_cf2_init();
     void rt_urlio_init(void); rt_urlio_init();
     void rt_archiver_init(void); rt_archiver_init();
     void rt_xmlparser_init(void); rt_xmlparser_init();

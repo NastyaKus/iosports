@@ -26,6 +26,7 @@ static void runtime_init(void) {
     rt_objc_init();
     rt_exports_init();
     rt_foundation_init();
+    { void rt_unwind_init(void); rt_unwind_init(); }
     rt_uikit_init();
     rt_audio_init();
     { void rt_midi_init(void); rt_midi_init(); }
@@ -63,8 +64,18 @@ static const char *sym_for(uint64_t a, uint64_t *off) {
     uint64_t o1 = 0, o2 = 0;
     const char *m = rt_objc_symbolize(a, &o1, b, 300);
     const char *s = rt_image_symbolize(a, &o2);
-    if (m && (!s || o1 <= o2)) { *off = o1; return m; }
-    *off = o2; return s;
+    const char *r;
+    if (m && (!s || o1 <= o2)) { *off = o1; r = m; }
+    else { *off = o2; r = s; }
+    /* append the address inside the image file (unslid), for disassemblers */
+    struct rt_image *im = rt_image_for_addr(a);
+    if (im && r != b) { snprintf(b, 300, "%s", r); r = b; }
+    if (im) {
+        size_t l = strlen(b);
+        const char *f = strrchr(im->path, '/');
+        snprintf(b + l, 300 - l, " [%s 0x%llx]", f ? f + 1 : im->path, (unsigned long long)(a - (uint64_t)im->slide));
+    }
+    return r;
 }
 int rt_is_strict(void);
 int rt_first_time(const char *key);

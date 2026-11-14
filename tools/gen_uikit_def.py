@@ -20,6 +20,7 @@ def lib_for(name):
     if n.startswith("CG"): return "CoreGraphics"
     if n.startswith("CA"): return "QuartzCore"
     if n.startswith("CT"): return "CoreText"
+    if n.startswith("SK"): return "StoreKit"
     return "UIKit"
 
 funcs, data, classes = {}, {}, {}

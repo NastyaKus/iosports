@@ -73,6 +73,7 @@ rm -rf "$S/WebJS.app"; mkdir -p "$S/WebJS.app"
 app "$S/WebJS.app/WebJS" 12.0 "$root/samples/webjs_demo/main.m" $F -framework UIKit -framework CoreGraphics
 python3 -I "$root/tests/make_webjs_bundle.py" "$S/WebJS.app"
 app "$S/cxx_basics" 12.0 "$root/samples/cxx_basics/main.mm" $F
+SDK_CXXFLAGS="-fexceptions -fcxx-exceptions -fobjc-exceptions" app "$S/exceptions_demo" 12.0 "$root/samples/exceptions_demo/main.mm" $F
 app "$S/neg_unrecognized" 12.0 "$root/tests/negative/unrecognized.m" $F
 # link against an API the SDK does not have: flat lookup at runtime -> trap
 clang -target arm64-apple-ios12.0 -nostdlibinc -isystem "$root/sdk/include" -c "$root/tests/negative/missing_api.c" -o "$T/missing.o"
@@ -202,6 +203,8 @@ print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h -
   if [ $flavor = android-arm64 ]; then
     $R "$S/cxx_basics" >"$T/out.txt" 2>&1; rc=$?
     if [ $rc = 0 ] && diff -u "$root/tests/golden/cxx_basics.txt" "$T/out.txt" >"$T/diff.txt"; then ok "cxx_basics (std::__1 ABI, threads, RTTI)"; else ko "cxx_basics rc=$rc" "$T/diff.txt"; fi
+    $R "$S/exceptions_demo" >"$T/out.txt" 2>&1; rc=$?
+    if [ $rc = 0 ] && diff -u "$root/tests/golden/exceptions_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "exceptions_demo (C++/ObjC throw, catch, cleanups, rethrow, runtime frames)"; else ko "exceptions_demo rc=$rc" "$T/diff.txt"; fi
   fi
   # 4c. embedded framework + dylib through @rpath, plug-in bundle via NSBundle/dlopen, weak C++ coalescing
   $R "$S/DylibDemo.app" >"$T/out.txt" 2>&1; rc=$?

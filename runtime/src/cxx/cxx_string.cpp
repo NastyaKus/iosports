@@ -1,7 +1,8 @@
-// iosrt C++ support, part 1: the template-based pieces of Apple's libc++
-// (std::__1, alternate string layout), instantiated from libc++ headers with
-// the configuration in include/__config_site. Exported to guests through the
-// generated exports/cxx_gen.def.
+// iosrt C++ support, part 1: glue between the runtime's libc++ build
+// (std::__1 with Apple's configuration, tools/build_libcxx.sh) and the rest:
+// libc++'s fatal-error hook and the std::logic_error/runtime_error
+// constructors from std::__1::string that the NDK's libc++abi does not have.
+// Exported to guests through the generated exports/cxx_gen.def.
 #include <string>
 #include <stdexcept>
 #include <cstdio>
@@ -19,33 +20,9 @@ void __libcpp_verbose_abort(char const *fmt, ...) {
     abort();
 }
 
-// out-of-line members that Apple's libc++.dylib exports
-template class basic_string<char>;
-template class basic_string<wchar_t>;
-
-static string fmt_u(unsigned long long v) { char b[32]; snprintf(b, sizeof b, "%llu", v); return string(b); }
-static string fmt_s(long long v) { char b[32]; snprintf(b, sizeof b, "%lld", v); return string(b); }
-string to_string(int v) { return fmt_s(v); }
-string to_string(long v) { return fmt_s(v); }
-string to_string(long long v) { return fmt_s(v); }
-string to_string(unsigned v) { return fmt_u(v); }
-string to_string(unsigned long v) { return fmt_u(v); }
-string to_string(unsigned long long v) { return fmt_u(v); }
-string to_string(double v) { char b[64]; snprintf(b, sizeof b, "%f", v); return string(b); }
-string to_string(float v) { return to_string((double)v); }
-
-// smallest prime >= n (hash table bucket counts)
-size_t __next_prime(size_t n) {
-    if (n <= 2) return 2;
-    for (size_t c = n | 1;; c += 2) {
-        bool prime = true;
-        for (size_t d = 3; d * d <= c; d += 2) if (c % d == 0) { prime = false; break; }
-        if (prime) return c;
-    }
-}
-
-void __throw_system_error(int ev, const char *what) {
-    char b[512]; snprintf(b, sizeof b, "std::system_error(%d): %s", ev, what ? what : "");
+// declared by the NDK's <stdexcept>, defined in no libc++ source we build
+void __throw_runtime_error(const char *msg) {
+    char b[512]; snprintf(b, sizeof b, "std::runtime_error: %s", msg ? msg : "");
     rt_cxx_fatal(b);
     abort();
 }
@@ -62,16 +39,3 @@ extern "C" void iosrt_runtime_error_from_string1(void *self, const std::string &
 extern "C" void iosrt_logic_error_from_string(void *self, const std::string &s)
     __asm__("_ZNSt11logic_errorC2ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE");
 extern "C" void iosrt_logic_error_from_string(void *self, const std::string &s) { new (self) std::logic_error(s.c_str()); }
-
-// std::ios_base::Init: the static initializer every translation unit that
-// includes <iostream> runs. The standard streams themselves are not provided
-// (they need libc++'s locale machinery); initialising them is a no-op so such
-// programs start, and only real stream output would be missing.
-extern "C" void iosrt_ios_base_init_ctor(void *self) __asm__("_ZNSt3__18ios_base4InitC1Ev");
-extern "C" void iosrt_ios_base_init_ctor(void *self) { (void)self; }
-extern "C" void iosrt_ios_base_init_ctor2(void *self) __asm__("_ZNSt3__18ios_base4InitC2Ev");
-extern "C" void iosrt_ios_base_init_ctor2(void *self) { (void)self; }
-extern "C" void iosrt_ios_base_init_dtor(void *self) __asm__("_ZNSt3__18ios_base4InitD1Ev");
-extern "C" void iosrt_ios_base_init_dtor(void *self) { (void)self; }
-extern "C" void iosrt_ios_base_init_dtor2(void *self) __asm__("_ZNSt3__18ios_base4InitD2Ev");
-extern "C" void iosrt_ios_base_init_dtor2(void *self) { (void)self; }

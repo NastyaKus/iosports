@@ -164,17 +164,12 @@ int iosrt_backtrace(void **buf, int n) { (void)buf; (void)n; return 0; }
 struct darwin_utsname { char sysname[256], nodename[256], release[256], version[256], machine[256]; };
 int iosrt_uname(struct darwin_utsname *u) {
     memset(u, 0, sizeof *u);
-    strcpy(u->sysname, "Darwin"); strcpy(u->nodename, "iosrt"); strcpy(u->release, "18.0.0");
-    strcpy(u->version, "Darwin Kernel Version 18.0.0 (iosrt)"); strcpy(u->machine, "iPhone10,3");
+    strcpy(u->sysname, "Darwin"); strcpy(u->nodename, "iosrt"); strcpy(u->release, "17.5.0");
+    strcpy(u->version, "Darwin Kernel Version 17.5.0: iosrt; root:xnu/RELEASE_ARM64_T8015"); strcpy(u->machine, "iPhone10,3");
     return 0;
 }
 int iosrt_getifaddrs(void **ifap) { *ifap = NULL; return 0; }     /* no interfaces visible */
 void iosrt_freeifaddrs(void *p) { (void)p; }
-int iosrt_sysctl(int *name, unsigned n, void *old, size_t *oldlen, void *nw, size_t nwlen) {
-    (void)name; (void)n; (void)old; (void)nw; (void)nwlen;
-    if (oldlen) *oldlen = 0;
-    return -1;
-}
 int iosrt_setxattr(const char *p, const char *n, const void *v, size_t sz, uint32_t pos, int opt) { (void)p; (void)n; (void)v; (void)sz; (void)pos; (void)opt; return 0; }
 int iosrt_getxattr(const char *p, const char *n, void *v, size_t sz, uint32_t pos, int opt) { (void)p; (void)n; (void)v; (void)sz; (void)pos; (void)opt; return -1; }
 

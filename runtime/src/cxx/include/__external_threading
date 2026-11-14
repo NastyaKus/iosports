@@ -1,0 +1,171 @@
+// -*- C++ -*-
+// iosrt: libc++ threading primitives with Apple's object layout.
+//
+// Guest code compiled against Apple's libc++ keeps std::mutex,
+// std::condition_variable and friends inline, sized for Darwin's pthread types
+// (mutex 64 bytes, cond 48, once 16, key 8) and initialised with Darwin's
+// static initialisers. The runtime's own build of libc++ (std::__1) must use
+// the same layout, so it goes through iosrt's Darwin pthread wrappers, which
+// turn statically initialised Darwin objects into host objects on first use.
+// When this header is used to build iOS test apps (__APPLE__), the calls are
+// plain Darwin pthread calls.
+#ifndef _LIBCPP___EXTERNAL_THREADING
+#define _LIBCPP___EXTERNAL_THREADING
+
+#include <__chrono/convert_to_timespec.h>
+#include <__chrono/duration.h>
+#include <__config>
+#include <errno.h>
+#include <time.h>
+#include <sched.h>
+#include <pthread.h>
+
+typedef ::timespec __libcpp_timespec_t;
+
+#if defined(__APPLE__)
+#  define _IOSRT_PT(name) ::name
+#  define _IOSRT_MUTEX(m) reinterpret_cast<pthread_mutex_t*>(m)
+#  define _IOSRT_COND(c) reinterpret_cast<pthread_cond_t*>(c)
+#else
+extern "C" {
+int iosrt_pthread_mutex_lock(void*);
+int iosrt_pthread_mutex_trylock(void*);
+int iosrt_pthread_mutex_unlock(void*);
+int iosrt_pthread_mutex_destroy(void*);
+int iosrt_pthread_cond_wait(void*, void*);
+int iosrt_pthread_cond_timedwait(void*, void*, const struct timespec*);
+int iosrt_pthread_cond_signal(void*);
+int iosrt_pthread_cond_broadcast(void*);
+int iosrt_pthread_cond_destroy(void*);
+int iosrt_pthread_once(long*, void (*)(void));
+int iosrt_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
+}
+#  define _IOSRT_PT(name) ::iosrt_##name
+#  define _IOSRT_MUTEX(m) static_cast<void*>(m)
+#  define _IOSRT_COND(c) static_cast<void*>(c)
+#endif
+
+_LIBCPP_BEGIN_NAMESPACE_STD
+
+struct __libcpp_darwin_mutex { long __sig; char __opaque[56]; };
+struct __libcpp_darwin_cond { long __sig; char __opaque[40]; };
+struct __libcpp_darwin_once { long __sig; char __opaque[8]; };
+
+typedef __libcpp_darwin_mutex __libcpp_mutex_t;
+#define _LIBCPP_MUTEX_INITIALIZER {0x32AAABA7L, {0}}
+typedef __libcpp_darwin_mutex __libcpp_recursive_mutex_t;
+
+typedef __libcpp_darwin_cond __libcpp_condvar_t;
+#define _LIBCPP_CONDVAR_INITIALIZER {0x3CB0B1BBL, {0}}
+
+typedef __libcpp_darwin_once __libcpp_exec_once_flag;
+#define _LIBCPP_EXEC_ONCE_INITIALIZER {0x30B1BCBAL, {0}}
+
+typedef pthread_t __libcpp_thread_id;
+#define _LIBCPP_NULL_THREAD ((__libcpp_thread_t()))
+typedef pthread_t __libcpp_thread_t;
+
+typedef unsigned long __libcpp_tls_key;
+#define _LIBCPP_TLS_DESTRUCTOR_CC
+
+#define _LIBCPP_THREAD_ABI_VISIBILITY inline _LIBCPP_HIDE_FROM_ABI
+
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_recursive_mutex_init(__libcpp_recursive_mutex_t* __m) {
+  pthread_mutexattr_t __attr;
+  int __ec = pthread_mutexattr_init(&__attr);
+  if (__ec)
+    return __ec;
+  __ec = pthread_mutexattr_settype(&__attr, PTHREAD_MUTEX_RECURSIVE);
+  if (!__ec)
+    __ec = pthread_mutex_init(reinterpret_cast<pthread_mutex_t*>(__m), &__attr);
+  pthread_mutexattr_destroy(&__attr);
+  return __ec;
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_recursive_mutex_lock(__libcpp_recursive_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_lock)(_IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS bool __libcpp_recursive_mutex_trylock(__libcpp_recursive_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_trylock)(_IOSRT_MUTEX(__m)) == 0;
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_recursive_mutex_unlock(__libcpp_recursive_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_unlock)(_IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_recursive_mutex_destroy(__libcpp_recursive_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_destroy)(_IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_mutex_lock(__libcpp_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_lock)(_IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS bool __libcpp_mutex_trylock(__libcpp_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_trylock)(_IOSRT_MUTEX(__m)) == 0;
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_mutex_unlock(__libcpp_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_unlock)(_IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_mutex_destroy(__libcpp_mutex_t* __m) {
+  return _IOSRT_PT(pthread_mutex_destroy)(_IOSRT_MUTEX(__m));
+}
+
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_condvar_signal(__libcpp_condvar_t* __cv) {
+  return _IOSRT_PT(pthread_cond_signal)(_IOSRT_COND(__cv));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_condvar_broadcast(__libcpp_condvar_t* __cv) {
+  return _IOSRT_PT(pthread_cond_broadcast)(_IOSRT_COND(__cv));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_condvar_wait(__libcpp_condvar_t* __cv, __libcpp_mutex_t* __m) {
+  return _IOSRT_PT(pthread_cond_wait)(_IOSRT_COND(__cv), _IOSRT_MUTEX(__m));
+}
+_LIBCPP_THREAD_ABI_VISIBILITY _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int
+__libcpp_condvar_timedwait(__libcpp_condvar_t* __cv, __libcpp_mutex_t* __m, __libcpp_timespec_t* __ts) {
+  int __r = _IOSRT_PT(pthread_cond_timedwait)(_IOSRT_COND(__cv), _IOSRT_MUTEX(__m), __ts);
+#if !defined(__APPLE__)
+  if (__r == 60) // the wrapper reports Darwin's ETIMEDOUT
+    __r = ETIMEDOUT;
+#endif
+  return __r;
+}
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_condvar_destroy(__libcpp_condvar_t* __cv) {
+  return _IOSRT_PT(pthread_cond_destroy)(_IOSRT_COND(__cv));
+}
+
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_execute_once(__libcpp_exec_once_flag* __flag, void (*__init_routine)()) {
+#if defined(__APPLE__)
+  return ::pthread_once(reinterpret_cast<pthread_once_t*>(__flag), __init_routine);
+#else
+  return ::iosrt_pthread_once(&__flag->__sig, __init_routine);
+#endif
+}
+
+_LIBCPP_THREAD_ABI_VISIBILITY bool __libcpp_thread_id_equal(__libcpp_thread_id __t1, __libcpp_thread_id __t2) { return __t1 == __t2; }
+_LIBCPP_THREAD_ABI_VISIBILITY bool __libcpp_thread_id_less(__libcpp_thread_id __t1, __libcpp_thread_id __t2) { return __t1 < __t2; }
+_LIBCPP_THREAD_ABI_VISIBILITY __libcpp_thread_id __libcpp_thread_get_id(const __libcpp_thread_t* __t) { return *__t; }
+_LIBCPP_THREAD_ABI_VISIBILITY bool __libcpp_thread_isnull(const __libcpp_thread_t* __t) { return __libcpp_thread_get_id(__t) == 0; }
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_thread_create(__libcpp_thread_t* __t, void* (*__func)(void*), void* __arg) {
+  return _IOSRT_PT(pthread_create)(__t, nullptr, __func, __arg);
+}
+_LIBCPP_THREAD_ABI_VISIBILITY __libcpp_thread_id __libcpp_thread_get_current_id() { return pthread_self(); }
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_thread_join(__libcpp_thread_t* __t) { return pthread_join(*__t, nullptr); }
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_thread_detach(__libcpp_thread_t* __t) { return pthread_detach(*__t); }
+_LIBCPP_THREAD_ABI_VISIBILITY void __libcpp_thread_yield() { sched_yield(); }
+_LIBCPP_THREAD_ABI_VISIBILITY void __libcpp_thread_sleep_for(const chrono::nanoseconds& __ns) {
+  __libcpp_timespec_t __ts = std::__convert_to_timespec<__libcpp_timespec_t>(__ns);
+  while (nanosleep(&__ts, &__ts) == -1 && errno == EINTR)
+    ;
+}
+
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_tls_create(__libcpp_tls_key* __key, void (*__at_exit)(void*)) {
+  pthread_key_t __k;
+  int __r = pthread_key_create(&__k, __at_exit);
+  *__key = static_cast<__libcpp_tls_key>(__k);
+  return __r;
+}
+_LIBCPP_THREAD_ABI_VISIBILITY void* __libcpp_tls_get(__libcpp_tls_key __key) { return pthread_getspecific(static_cast<pthread_key_t>(__key)); }
+_LIBCPP_THREAD_ABI_VISIBILITY int __libcpp_tls_set(__libcpp_tls_key __key, void* __p) { return pthread_setspecific(static_cast<pthread_key_t>(__key), __p); }
+
+_LIBCPP_END_NAMESPACE_STD
+
+#undef _IOSRT_PT
+#undef _IOSRT_MUTEX
+#undef _IOSRT_COND
+
+#endif // _LIBCPP___EXTERNAL_THREADING

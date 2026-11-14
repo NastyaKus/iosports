@@ -3,7 +3,7 @@
 Legend: ✅ works and is covered by automated tests · 🟡 built / implemented but
 not verified on a real Android device · ❌ not implemented
 
-## Verified (tests/run_tests.sh — 71/71 passing)
+## Verified (tests/run_tests.sh — 72/72 passing)
 
 Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 **android-arm64 (bionic, static)** build of the runtime, executed under
@@ -49,7 +49,8 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | setjmp/longjmp, Mach clock services, BSD hash tables, URL variants of the file APIs, `std::ios_base::Init` | ✅ | `sys_demo` |
 | Compatibility report with a plain-language verdict (Swift, embedded frameworks, OpenGL ES, Core Data, …) | ✅ | report tests; shown by the APK's "Compatibility report" button |
 | iOS compatibility screen for bundles without a launch storyboard (320×480 / 320×568, scaled up) | ✅ | `Counter.app` test |
-| Apple-ABI libc++ (`std::__1`, alternate string layout), threads, RTTI | ✅ | `cxx_basics` (Android build) |
+| Apple-ABI libc++: the whole library (strings, iostreams, locale, regex, threads, chrono, ...) built from LLVM 18.1 sources (`runtime/third_party/libcxx`) with Apple's arm64 choices: `std::__1`, alternate string layout, Darwin-sized threading objects, Darwin `mbstate_t` and ctype masks | ✅ | `cxx_basics` (Android build) |
+| C++ and Objective-C exceptions: two-phase unwinding through guest frames (compact unwind + DWARF CFI), LSDA personality (catch by type, base class, pointer, `...`, rethrow, cleanups), `@try/@catch/@finally`, exceptions raised by the runtime and thrown through runtime frames | ✅ | `exceptions_demo` (Android build) |
 | libdispatch (serial/concurrent queues, groups, sources, after, once), per-thread run loops, `@synchronized` | ✅ | samples + real-app trace |
 | AudioToolbox RemoteIO render callback → audio backend | ✅ | `audio_sine`: 1.5 s, 440 Hz ± 1, amplitude 0.50 |
 | Compatibility report (`--report`) | ✅ | report tests |
@@ -69,7 +70,6 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 
 | Item | Why it matters |
 |---|---|
-| ❌ C++ / ObjC **exception unwinding** (`@try`, `throw`) | needs an unwinder for Mach-O `__unwind_info` / `__eh_frame`; today a throw ends the app with a message |
 | ❌ Microphone input (RemoteIO input bus records silence), AudioQueue input | recording apps |
 | ❌ Audio encoders (AAC export is written as PCM), OpenAL | audio export, OpenAL games |
 | ❌ Software keyboard / text input | text fields can be shown but not typed into |
@@ -80,6 +80,7 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | ❌ Swift runtime | modern apps (embedded `libswift*.dylib` are not run yet) |
 | ❌ GLKit (next) | GLKit-based games |
 | ❌ Core Data, sqlite3, NSPredicate evaluation (later phase) | data-driven apps |
+| ❌ Compiled asset catalogs (`Assets.car`) | images of most apps built after 2014 |
 | ❌ 32-bit (armv7) apps | would need CPU emulation (touchHLE's domain) |
 | ❌ FairPlay-encrypted App Store binaries | DRM: only user-decrypted or self-built binaries can run |
 
