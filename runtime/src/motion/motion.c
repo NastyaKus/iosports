@@ -27,6 +27,7 @@ RT_DEFINE_CLASS(UIAcceleration);
 RT_DEFINE_CLASS(CMMotionManager);
 RT_DEFINE_CLASS(CMAccelerometerData);
 RT_DEFINE_CLASS(CMLogItem);
+RT_DEFINE_CLASS(CMMotionActivityManager);
 void rt_after(double delay, void (*fn)(void *), void *ctx);
 double rt_now(void);
 
@@ -173,6 +174,10 @@ static id mm_data(id self, SEL s) {
 static id mm_nil(id self, SEL s) { (void)self; (void)s; return NULL; }
 static void mm_noop(id self, SEL s) { (void)self; (void)s; }
 static void mm_noopQ(id self, SEL s, id q, id h) { (void)self; (void)s; (void)q; (void)h; }
+static void mm_noopRefQ(id self, SEL s, unsigned long f, id q, id h) { (void)self; (void)s; (void)f; (void)q; (void)h; }
+static void mm_noopRef(id self, SEL s, unsigned long f) { (void)self; (void)s; (void)f; }
+static void mm_noopCb(id self, SEL s, void *cb, void *info, double i) { (void)self; (void)s; (void)cb; (void)info; (void)i; }
+static rt_bool mam_no(Class c, SEL s) { (void)c; (void)s; return 0; }
 
 void rt_motion_init(void) {
     Class o = RT_CLASS(NSObject);
@@ -204,4 +209,11 @@ void rt_motion_init(void) {
     IM(m, "startMagnetometerUpdates", mm_noop); IM(m, "stopMagnetometerUpdates", mm_noop);
     IM(m, "startGyroUpdatesToQueue:withHandler:", mm_noopQ); IM(m, "startDeviceMotionUpdatesToQueue:withHandler:", mm_noopQ);
     IM(m, "setGyroUpdateInterval:", mm_setInterval); IM(m, "setDeviceMotionUpdateInterval:", mm_setInterval); IM(m, "setMagnetometerUpdateInterval:", mm_setInterval);
+    IM(m, "gyroUpdateInterval", mm_interval); IM(m, "deviceMotionUpdateInterval", mm_interval); IM(m, "magnetometerUpdateInterval", mm_interval);
+    IM(m, "startDeviceMotionUpdatesUsingReferenceFrame:", mm_noopRef);
+    IM(m, "startDeviceMotionUpdatesUsingReferenceFrame:toQueue:withHandler:", mm_noopRefQ);
+    IM(m, "startMagnetometerUpdatesToQueue:withHandler:", mm_noopQ);
+    IM(m, "setAccelerometerDataCallback:info:interval:", mm_noopCb);   /* private callback API: no samples are delivered through it */
+    rt_native_class(RT_CLASS(CMMotionActivityManager), &iosrt_meta_CMMotionActivityManager, "CMMotionActivityManager", o, 0);
+    CM(RT_CLASS(CMMotionActivityManager), "isActivityAvailable", mam_no);
 }

@@ -935,6 +935,7 @@ static void rl_noop_dealloc(id self, SEL s) { (void)self; (void)s; /* loops live
 struct nsdefaults { Class isa; id dict; };
 static id g_defaults;
 static id ud_standard(Class c, SEL s) { (void)s; if (!g_defaults) { g_defaults = rt_alloc_instance(c, 0); ((struct nsdefaults *)g_defaults)->dict = rt_dict_new(NULL, NULL, 0); } return g_defaults; }
+static id ud_dictRep(id self, SEL s) { (void)s; return objc_autorelease(RT_SEND0(id, ((struct nsdefaults *)self)->dict, "copy")); }
 static id ud_get(id self, SEL s, id k) { (void)s; return rt_dict_get(((struct nsdefaults *)self)->dict, k); }
 static void ud_set(id self, SEL s, id v, id k) { (void)s; RT_SEND2(void, ((struct nsdefaults *)self)->dict, "setValue:forKey:", id, v, id, k); }
 static long ud_integer(id self, SEL s, id k) { id v = ud_get(self, s, k); return v ? RT_SEND0(long, v, "integerValue") : 0; }
@@ -1268,7 +1269,7 @@ void rt_foundation_misc_init(void) {
     IM(ud, "dataForKey:", ud_get); IM(ud, "setObject:forKey:", ud_set); IM(ud, "integerForKey:", ud_integer);
     IM(ud, "boolForKey:", ud_bool); IM(ud, "doubleForKey:", ud_double); IM(ud, "floatForKey:", ud_float);
     IM(ud, "setInteger:forKey:", ud_setInteger); IM(ud, "setBool:forKey:", ud_setBool); IM(ud, "setDouble:forKey:", ud_setDouble);
-    IM(ud, "setFloat:forKey:", ud_setFloat); IM(ud, "removeObjectForKey:", ud_remove); IM(ud, "registerDefaults:", ud_register);
+    IM(ud, "setFloat:forKey:", ud_setFloat); IM(ud, "removeObjectForKey:", ud_remove); IM(ud, "registerDefaults:", ud_register); IM(ud, "dictionaryRepresentation", ud_dictRep);
     IM(ud, "synchronize", ud_sync);
 
     NEWCLASS(NSFileManager, o, 0);

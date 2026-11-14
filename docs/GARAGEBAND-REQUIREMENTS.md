@@ -51,6 +51,18 @@ null GL).
 
 Taps go through Welcome → Get Started → the instrument browser; the carousel swipes.
 
+## Creating a song (tap on an instrument card)
+
+15. Older file APIs (`createDirectoryAtPath:attributes:`, `writeToFile:atomically:`,
+    `stringWithFileSystemRepresentation:length:`), set/index-set/dictionary bulk operations.
+16. `CFStringGetListOfAvailableEncodings` (the song engine walks it while loading channel strips).
+17. `NSUndoManager`, `NSHashTable`, `NSFileCoordinator` (the save goes through its accessor block).
+18. Nil-tolerant `bringSubviewToFront:` and friends; `maskView`, snapshots, trait collections.
+
+With these, the app creates and saves `My Song.band` (project data, metadata), builds the
+song screen and the Keyboard instrument's controller, and loads the song model in the
+background (slowly under qemu; the progress overlay was still up after several minutes).
+
 ## Still missing on the first screen
 
 * "do not localize" placeholder labels (hidden on iOS by later code paths), Smart Piano icon.

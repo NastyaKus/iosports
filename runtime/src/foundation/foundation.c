@@ -483,6 +483,13 @@ static id n_withBool(Class c, SEL s, long v) { (void)s; return objc_autorelease(
 static id n_withDouble(Class c, SEL s, double v) { (void)s; return objc_autorelease(num_make(c, 1, (long long)v, v)); }
 static id n_withFloat(Class c, SEL s, float v) { (void)s; return objc_autorelease(num_make(c, 1, (long long)v, (double)v)); }
 static id n_initWithInt(id self, SEL s, int v) { (void)s; struct nsnum *n = (struct nsnum *)self; n->kind = 0; n->i = v; n->d = v; return self; }
+static id n_initWithLong(id self, SEL s, long long v) { (void)s; struct nsnum *n = (struct nsnum *)self; n->kind = 0; n->i = v; n->d = (double)v; return self; }
+static id n_initWithFloat(id self, SEL s, float v) { (void)s; struct nsnum *n = (struct nsnum *)self; n->kind = 1; n->i = (long long)v; n->d = v; return self; }
+static id n_initWithShort(id self, SEL s, long v) { return n_initWithLong(self, s, (short)v); }
+static id n_initWithChar(id self, SEL s, long v) { return n_initWithLong(self, s, (signed char)v); }
+static id n_initWithUInt(id self, SEL s, unsigned long v) { return n_initWithLong(self, s, (unsigned int)v); }
+static id n_initWithUChar(id self, SEL s, unsigned long v) { return n_initWithLong(self, s, (unsigned char)v); }
+static id n_initWithUShort(id self, SEL s, unsigned long v) { return n_initWithLong(self, s, (unsigned short)v); }
 static id n_initWithDouble(id self, SEL s, double v) { (void)s; struct nsnum *n = (struct nsnum *)self; n->kind = 1; n->i = (long long)v; n->d = v; return self; }
 static id n_initWithBool(id self, SEL s, long v) { (void)s; struct nsnum *n = (struct nsnum *)self; n->kind = 2; n->i = (v & 0xff) != 0; n->d = (double)n->i; return self; }
 static int n_intValue(id self, SEL s) { (void)s; return (int)((struct nsnum *)self)->i; }
@@ -633,7 +640,11 @@ void rt_foundation_init(void) {
     CM(n, "numberWithUnsignedLong:", n_withUnsigned); CM(n, "numberWithUnsignedLongLong:", n_withUnsigned);
     CM(n, "numberWithUnsignedChar:", n_withUnsigned); CM(n, "numberWithUnsignedShort:", n_withUnsigned);
     CM(n, "numberWithBool:", n_withBool); CM(n, "numberWithDouble:", n_withDouble); CM(n, "numberWithFloat:", n_withFloat);
-    IM(n, "initWithInt:", n_initWithInt); IM(n, "initWithInteger:", n_initWithInt); IM(n, "initWithDouble:", n_initWithDouble);
+    IM(n, "initWithInt:", n_initWithInt); IM(n, "initWithInteger:", n_initWithLong); IM(n, "initWithDouble:", n_initWithDouble);
+    IM(n, "initWithLong:", n_initWithLong); IM(n, "initWithLongLong:", n_initWithLong); IM(n, "initWithFloat:", n_initWithFloat);
+    IM(n, "initWithShort:", n_initWithShort); IM(n, "initWithChar:", n_initWithChar);
+    IM(n, "initWithUnsignedInt:", n_initWithUInt); IM(n, "initWithUnsignedChar:", n_initWithUChar); IM(n, "initWithUnsignedShort:", n_initWithUShort);
+    IM(n, "initWithUnsignedLong:", n_initWithLong); IM(n, "initWithUnsignedLongLong:", n_initWithLong); IM(n, "initWithUnsignedInteger:", n_initWithLong);
     IM(n, "initWithBool:", n_initWithBool);
     IM(n, "intValue", n_intValue); IM(n, "integerValue", n_llValue); IM(n, "longValue", n_llValue);
     IM(n, "longLongValue", n_llValue); IM(n, "unsignedIntegerValue", n_llValue); IM(n, "unsignedIntValue", n_intValue);
@@ -673,6 +684,7 @@ void rt_foundation_init(void) {
     void rt_cf2_init(void); rt_cf2_init();
     void rt_urlio_init(void); rt_urlio_init();
     void rt_archiver_init(void); rt_archiver_init();
+    void rt_foundation_more6_init(void); rt_foundation_more6_init();
     void rt_xmlparser_init(void); rt_xmlparser_init();
 }
 

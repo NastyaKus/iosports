@@ -68,7 +68,7 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Apple libc++ целиком | `third_party/libcxx` (LLVM 18.1 src) + `cxx/include` (`__config_site`, `__external_threading`, `bits/mbstate_t.h`), сборка `tools/build_libcxx.sh`, патч ctype/regex `tools/patch_libcxx_headers.py` |
 | Исключения C++/ObjC | `abi/unwind.c` (compact unwind, DWARF CFI, LSDA, `__cxa_*`, `objc_exception_throw`), вход в landing pad — `iosrt_uw_install` в `darwin_abi.S`; отладка `IOSRT_TRACE_EH=1` |
 | vDSP / vecLib | `audio/vdsp.c` (FFT с упаковкой Apple), старые — `foundation/more4.c` |
-| Находки по GarageBand | `foundation/more5.c`, `foundation/cf2.c`, `libsystem/extra.c`, `uikit/extras.c` |
+| Находки по GarageBand | `foundation/more5.c`, `foundation/more6.c` (NSUndoManager, NSHashTable, NSFileCoordinator), `foundation/cf2.c`, `libsystem/extra.c`, `uikit/extras.c` |
 | Assets.car (BOM, renditions, атласы) | `uikit/assets.c` (`rt_asset_image`), распаковка LZFSE/LZVN — `uikit/lzfse.c` |
 | Auto Layout (Cassowary, NIB-констрейнты, VFL, anchors) | `uikit/autolayout.c` (`rt_al_layout_window` из `layout_tree`, `rt_al_decode_view` из `view_initWithCoder`) |
 | Порядок appear (will → layout → did) | `uikit/controls2.c` `rt_vc_appear` |
@@ -117,7 +117,10 @@ IPA (расшифрованный) — `scratchpad/apps/garageband/x/Payload/Mob
 `docs/GARAGEBAND-REQUIREMENTS.md`. ✅ dylib, ✅ libc++, ✅ исключения, ✅ vDSP: в трассе стартует и
 показывает браузер инструментов. ✅ Assets.car, ✅ Auto Layout, ✅ экраны первого запуска
 (тапы Continue (333,355) → Use GarageBand (333,355), экран 667×375), карусель листается.
-Дальше: открыть инструмент (Keyboard), Core Data/sqlite, звук инструментов. Трасса GarageBand под qemu ~1 мин;
+Тап по карточке (190,160) создаёт и сохраняет песню, строит экран Keyboard; модель песни
+грузится в фоне (под qemu минуты, спиннер MAUIProgressViewController). Для длинных трасс:
+`IOSRT_RENDER_EVERY=50`, `wait:300000` в скрипте, `IOSRT_WATCHDOG=N`. Разбор: `ivars.py --index addr`
+(метод по адресу), `selxref.py gb64 sel` (кто шлёт селектор). Новые API — `foundation/more6.c`. Трасса GarageBand под qemu ~1 мин;
 `IOSRT_DUMP_VIEWS=1` — дерево view в конце. Разбор бинаря: `scratchpad/tools/{dis,ivars,xref}.py`.
 
 ## План (порядок согласован с Кириллом)

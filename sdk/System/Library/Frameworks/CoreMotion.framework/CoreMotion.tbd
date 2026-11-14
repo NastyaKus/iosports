@@ -5,5 +5,5 @@ install-name: '/System/Library/Frameworks/CoreMotion.framework/CoreMotion'
 current-version: 1
 exports:
   - targets: [ arm64-ios ]
-    objc-classes: [ CMAccelerometerData, CMLogItem, CMMotionManager ]
+    objc-classes: [ CMAccelerometerData, CMLogItem, CMMotionActivityManager, CMMotionManager ]
 ...

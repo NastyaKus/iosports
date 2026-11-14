@@ -312,15 +312,15 @@ static void v_addSubview(id self, SEL s, id sub) { (void)s; insert_subview(self,
 static void v_insertSubviewAt(id self, SEL s, id sub, long idx) { (void)s; insert_subview(self, sub, idx); }
 static long sub_index(id self, id sub) { id a = V(self)->subviews; for (size_t i = 0; i < rt_array_count(a); i++) if (rt_array_at(a, i) == sub) return (long)i; return -1; }
 static void v_insertBelow(id self, SEL s, id sub, id sib) {
-    (void)s; if (V(sub)->superview == self) { objc_retain(sub); RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
+    (void)s; if (!sub) return; if (V(sub)->superview == self) { objc_retain(sub); RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
     long i = sub_index(self, sib); insert_subview(self, sub, i < 0 ? 0 : i);
 }
 static void v_insertAbove(id self, SEL s, id sub, id sib) {
-    (void)s; if (V(sub)->superview == self) { RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
+    (void)s; if (!sub) return; if (V(sub)->superview == self) { RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
     long i = sub_index(self, sib); insert_subview(self, sub, i < 0 ? -1 : i + 1);
 }
-static void v_bringToFront(id self, SEL s, id sub) { (void)s; if (V(sub)->superview == self) insert_subview(self, sub, -1); }
-static void v_sendToBack(id self, SEL s, id sub) { (void)s; if (V(sub)->superview == self) insert_subview(self, sub, 0); }
+static void v_bringToFront(id self, SEL s, id sub) { (void)s; if (sub && V(sub)->superview == self) insert_subview(self, sub, -1); }
+static void v_sendToBack(id self, SEL s, id sub) { (void)s; if (sub && V(sub)->superview == self) insert_subview(self, sub, 0); }
 static void v_exchange(id self, SEL s, long a, long b) {
     (void)s; id arr = V(self)->subviews; long n = (long)rt_array_count(arr);
     if (a < 0 || b < 0 || a >= n || b >= n || a == b) return;
@@ -1316,6 +1316,9 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
     unsigned max_frames = hf ? (unsigned)atoi(hf) : 0;
     int want_trace = max_frames || getenv("IOSRT_DUMP_FRAMES");
     int last_continuous = 0;
+    /* debugging aid for slow emulated traces: headless runs draw only every Nth frame (and the last) */
+    const char *re = getenv("IOSRT_RENDER_EVERY");
+    unsigned render_every = max_frames && re ? (unsigned)atoi(re) : 0;
     for (unsigned frame = 1; !rt_quit_requested; frame++) {
         pool = objc_autoreleasePoolPush();
         run_script(frame);
@@ -1334,7 +1337,7 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
         rt_runloop_run_once(max_frames || busy ? (max_frames ? 0 : 4) : 16);
         struct uiapp *a = (struct uiapp *)app;
         for (size_t i = 0; i < rt_array_count(a->windows); i++) layout_tree(rt_array_at(a->windows, i));
-        if (dirty || busy) {
+        if ((dirty || busy) && !(render_every > 1 && frame % render_every && frame < max_frames)) {
             dirty = 0;
             render_frame(frame, want_trace);
             last_continuous = rt_controls_continuous();

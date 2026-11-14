@@ -110,4 +110,5 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 Debugging aids: `IOSRT_DUMP_VIEWS=1` (view tree with text and alpha at exit),
 `IOSRT_TRACE_MSG=sel1,sel2` (logs the receiver class and first two arguments of
 messages that miss the method cache), `IOSRT_TRACE_KVC=1` (layer `setValue:forKey:`),
-`IOSRT_TRACE_EH=1` (exception unwinding), `IOSRT_WATCHDOG=N`.
+`IOSRT_TRACE_EH=1` (exception unwinding), `IOSRT_WATCHDOG=N` (stacks of all guest threads
+every N seconds), `IOSRT_RENDER_EVERY=N` (headless runs draw only every Nth frame).

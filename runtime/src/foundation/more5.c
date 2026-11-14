@@ -182,6 +182,74 @@ static id cs_illegal(Class c, SEL s) {
 }
 static id cs_symbols(Class c, SEL s) { (void)s; return RT_SEND1(id, (id)c, "characterSetWithCharactersInString:", id, rt_str("$+<=>^`|~")); }
 
+/* ------------------------------------------- older file APIs, sets, index sets */
+#include <sys/stat.h>
+#include <limits.h>
+static id fm_strWithFSRep(id self, SEL s, const char *p, unsigned long n) {
+    (void)self; (void)s; if (!p) return NULL;
+    return objc_autorelease(RT_SEND3(id, RT_SEND0(id, (id)RT_CLASS(NSString), "alloc"), "initWithBytes:length:encoding:", const void *, p, unsigned long, n, unsigned long, 4));
+}
+static rt_bool fm_createDirAttrs(id self, SEL s, id path, id attrs) {
+    (void)self; (void)s; (void)attrs;
+    const char *p = path ? rt_str_utf8(path) : NULL;
+    if (!p) return 0;
+    struct stat st;
+    return mkdir(p, 0755) == 0 || (stat(p, &st) == 0 && S_ISDIR(st.st_mode));
+}
+static rt_bool s_writeToFileAtomically(id self, SEL s, id path, long atomically) {
+    (void)s;
+    return ((long (*)(id, SEL, id, long, unsigned long, id *))objc_msgSend)(self, rt_sel("writeToFile:atomically:encoding:error:"), path, atomically & 0xff, 4, NULL) & 0xff;
+}
+static id a_objectsAtIndexes(id self, SEL s, id idx) {
+    (void)s; id out = RT_SEND0(id, (id)rt_class_named("NSMutableArray"), "array");
+    unsigned long n = RT_SEND0(unsigned long, self, "count");
+    for (unsigned long i = 0; idx && i < n; i++)
+        if (RT_SEND1(long, idx, "containsIndex:", unsigned long, i) & 0xff) RT_SEND1(void, out, "addObject:", id, RT_SEND1(id, self, "objectAtIndex:", unsigned long, i));
+    return out;
+}
+static rt_bool set_intersects(id self, SEL s, id other) {
+    (void)s; id all = RT_SEND0(id, self, "allObjects");
+    for (size_t i = 0; other && i < rt_array_count(all); i++) if (RT_SEND1(long, other, "containsObject:", id, rt_array_at(all, i)) & 0xff) return 1;
+    return 0;
+}
+static void mset_minus(id self, SEL s, id other) {
+    (void)s; id all = other ? RT_SEND0(id, other, "allObjects") : NULL;
+    for (size_t i = 0; all && i < rt_array_count(all); i++) RT_SEND1(void, self, "removeObject:", id, rt_array_at(all, i));
+}
+static void mset_intersect(id self, SEL s, id other) {
+    (void)s; id all = RT_SEND0(id, RT_SEND0(id, self, "allObjects"), "copy");
+    for (size_t i = 0; i < rt_array_count(all); i++) {
+        id o = rt_array_at(all, i);
+        if (!other || !(RT_SEND1(long, other, "containsObject:", id, o) & 0xff)) RT_SEND1(void, self, "removeObject:", id, o);
+    }
+    objc_release(all);
+}
+static void mis_addIndexes(id self, SEL s, id other) {
+    (void)s; if (!other) return;
+    for (unsigned long i = RT_SEND0(unsigned long, other, "firstIndex"); i < (unsigned long)LONG_MAX; ) {
+        RT_SEND1(void, self, "addIndex:", unsigned long, i);
+        unsigned long nx = RT_SEND1(unsigned long, other, "indexGreaterThanIndex:", unsigned long, i);
+        if (nx <= i) break;
+        i = nx;
+    }
+}
+static void mis_removeIndexes(id self, SEL s, id other) {
+    (void)s; if (!other) return;
+    for (unsigned long i = RT_SEND0(unsigned long, other, "firstIndex"); i < (unsigned long)LONG_MAX; ) {
+        RT_SEND1(void, self, "removeIndex:", unsigned long, i);
+        unsigned long nx = RT_SEND1(unsigned long, other, "indexGreaterThanIndex:", unsigned long, i);
+        if (nx <= i) break;
+        i = nx;
+    }
+}
+/* NSLocaleLanguageDirectionLeftToRight; right-to-left for the usual RTL languages */
+static long loc_charDirection(Class c, SEL s, id lang) {
+    (void)c; (void)s; const char *l = lang ? rt_str_utf8(lang) : "";
+    static const char *const rtl[] = { "ar", "he", "fa", "ur", "yi", "iw" };
+    for (size_t i = 0; i < sizeof rtl / sizeof *rtl; i++) if (!strncmp(l, rtl[i], 2)) return 2;
+    return 1;
+}
+
 /* ------------------------------------------------- C functions */
 id iosrt_NSOpenStepRootDirectory(void) { return rt_str("/"); }
 id iosrt_CFStringCreateWithFileSystemRepresentation(void *alloc, const char *buf) {
@@ -191,6 +259,18 @@ void iosrt_tzset(void) { tzset(); }
 
 void rt_foundation_more5_init(void) {
     Class st = RT_CLASS(NSString);
+    IM(st, "writeToFile:atomically:", s_writeToFileAtomically);
+    Class fm = rt_class_named("NSFileManager");
+    IM(fm, "stringWithFileSystemRepresentation:length:", fm_strWithFSRep);
+    IM(fm, "createDirectoryAtPath:attributes:", fm_createDirAttrs);
+    IM(rt_class_named("NSArray"), "objectsAtIndexes:", a_objectsAtIndexes);
+    IM(rt_class_named("NSSet"), "intersectsSet:", set_intersects);
+    IM(rt_class_named("NSMutableSet"), "minusSet:", mset_minus);
+    IM(rt_class_named("NSMutableSet"), "intersectSet:", mset_intersect);
+    IM(rt_class_named("NSMutableIndexSet"), "addIndexes:", mis_addIndexes);
+    IM(rt_class_named("NSMutableIndexSet"), "removeIndexes:", mis_removeIndexes);
+    CM(rt_class_named("NSLocale"), "characterDirectionForLanguage:", loc_charDirection);
+    CM(rt_class_named("NSLocale"), "lineDirectionForLanguage:", loc_charDirection);
     IM(st, "initWithBytesNoCopy:length:encoding:freeWhenDone:", s_initNoCopy);
     IM(st, "initWithCharactersNoCopy:length:freeWhenDone:", s_initCharsNoCopy);
     Class o = RT_CLASS(NSObject);

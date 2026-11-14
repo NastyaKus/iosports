@@ -136,6 +136,16 @@ static void a_enumerateOpts(id self, SEL s, unsigned long opts, void *blk) {
     if (opts & 2) { for (size_t i = a->n; i-- > 0 && !stop;) call_enum_block(blk, a->items[i], i, &stop); }
     else for (size_t i = 0; i < a->n && !stop; i++) call_enum_block(blk, a->items[i], i, &stop);
 }
+static id a_indexesOfObjectsPassing(id self, SEL s, void *blk) {
+    (void)s; struct nsarr *a = (struct nsarr *)self; bool stop = 0;
+    id out = RT_SEND0(id, (id)rt_class_named("NSMutableIndexSet"), "indexSet");
+    for (size_t i = 0; i < a->n && !stop; i++) {
+        long r = ((long (*)(void *, id, unsigned long, bool *))((struct rt_block *)blk)->invoke)(blk, a->items[i], i, &stop);
+        if (r & 0xff) RT_SEND1(void, out, "addIndex:", unsigned long, i);
+    }
+    return out;
+}
+static id a_indexesOfObjectsOptsPassing(id self, SEL s, unsigned long o, void *blk) { (void)o; return a_indexesOfObjectsPassing(self, s, blk); }
 static unsigned long a_indexOfObjectPassing(id self, SEL s, void *blk) {
     (void)s; struct nsarr *a = (struct nsarr *)self; bool stop = 0;
     for (size_t i = 0; i < a->n && !stop; i++) {
@@ -476,6 +486,7 @@ void rt_collections_init(void) {
     IM(a, "componentsJoinedByString:", a_join); IM(a, "countByEnumeratingWithState:objects:count:", a_fast);
     IM(a, "enumerateObjectsUsingBlock:", a_enumerate); IM(a, "enumerateObjectsWithOptions:usingBlock:", a_enumerateOpts);
     IM(a, "indexOfObjectPassingTest:", a_indexOfObjectPassing);
+    IM(a, "indexesOfObjectsPassingTest:", a_indexesOfObjectsPassing); IM(a, "indexesOfObjectsWithOptions:passingTest:", a_indexesOfObjectsOptsPassing);
     IM(a, "sortedArrayUsingSelector:", a_sortedSel); IM(a, "sortedArrayUsingComparator:", a_sortedCmp);
     IM(a, "sortedArrayUsingFunction:context:", a_sortedFunc);
     IM(a, "objectEnumerator", a_objectEnumerator); IM(a, "reverseObjectEnumerator", a_reverseEnum);
