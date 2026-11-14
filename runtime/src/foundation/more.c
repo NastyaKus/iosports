@@ -147,13 +147,40 @@ static unsigned long sig_frameLen(id self, SEL s) { (void)s; return 8u * (unsign
 static rt_bool sig_oneway(id self, SEL s) { (void)self; (void)s; return 0; }
 
 /* NSObject -methodSignatureForSelector: from the method's type encoding */
-static id o_methodSignature(id self, SEL s, SEL q) {
-    (void)s; struct rt_method *m = rt_find_method(self->isa, q);
-    if (!m || !m->types || !*m->types) return NULL;
-    return sig_make(m->types);
+/* The runtime's own methods carry no type encodings. Apps build NSInvocations on them
+   (e.g. set<X>:forState: chosen by name), so a signature is synthesised: setters return void,
+   known UIKit/QuartzCore properties get their real types, everything else is a word. */
+static const char *native_prop_type_in(Class c, const char *key);
+static id native_sig(Class c, SEL q) {
+    const char *name = (const char *)q;
+    char enc[160]; size_t o = 0;
+    int nargs = 0; for (const char *p = name; *p; p++) if (*p == ':') nargs++;
+    if (nargs > 12) return NULL;
+    const char *ret = "@";
+    if (!strncmp(name, "set", 3) && nargs >= 1) ret = "v";
+    else if (!nargs) { const char *t = native_prop_type_in(c, name); if (t) ret = t; }
+    o += (size_t)snprintf(enc + o, sizeof enc - o, "%s@:", ret);
+    for (int i = 0; i < nargs && o < sizeof enc - 40; i++) {
+        const char *at = "@";
+        if (i == 0 && nargs == 1 && !strncmp(name, "set", 3) && name[3]) {
+            char key[128]; snprintf(key, sizeof key, "%s", name + 3);
+            size_t L = strlen(key); if (L && key[L - 1] == ':') key[L - 1] = 0;
+            key[0] = (char)tolower((unsigned char)key[0]);
+            const char *t = native_prop_type_in(c, key); if (t) at = t;
+        }
+        o += (size_t)snprintf(enc + o, sizeof enc - o, "%s", at);
+    }
+    return sig_make(enc);
 }
-static id o_cmethodSignature(Class self, SEL s, SEL q) { (void)s; struct rt_method *m = rt_find_method(self, q); return m && m->types && *m->types ? sig_make(m->types) : NULL; }
-static id o_instanceMethodSignature(Class self, SEL s, SEL q) { (void)s; struct rt_method *m = rt_find_method(self, q); return m && m->types && *m->types ? sig_make(m->types) : NULL; }
+static id sig_for(Class c, SEL q) {
+    struct rt_method *m = rt_find_method(c, q);
+    if (!m) return NULL;
+    if (m->types && *m->types) return sig_make(m->types);
+    return native_sig(c, q);
+}
+static id o_methodSignature(id self, SEL s, SEL q) { (void)s; return sig_for(self->isa, q); }
+static id o_cmethodSignature(Class self, SEL s, SEL q) { (void)s; return sig_for(self->isa, q); }
+static id o_instanceMethodSignature(Class self, SEL s, SEL q) { (void)s; return sig_for(self, q); }
 
 /* ================================================================ NSInvocation */
 struct rt_callframe { uint64_t x[9]; double d[8]; uint64_t *stack; uint64_t nstack; uint64_t rx[2]; double rd[4]; };
@@ -255,6 +282,14 @@ static void inv_invokeWithTarget(id self, SEL s, id target) {
     (void)s; struct nsinv *v = (struct nsinv *)self;
     *(id *)v->argbuf[0] = target;
     if (!target) { memset(v->retbuf, 0, ((struct nssig *)v->sig)->ret.size); return; }
+    if (getenv("IOSRT_TRACE_INVOKE")) {   /* debugging aid: what NSInvocations call, with their object arguments */
+        struct nssig *g = (struct nssig *)v->sig; SEL sel = *(SEL *)v->argbuf[1];
+        char b[512]; int o = snprintf(b, sizeof b, "invoke -[%s %s]", rt_class_name(target->isa), sel ? (const char *)sel : "?");
+        for (int i = 2; i < g->nargs && o < (int)sizeof b - 64; i++) {
+            o += snprintf(b + o, sizeof b - (size_t)o, " 0x%llx", (unsigned long long)*(uint64_t *)v->argbuf[i]);
+        }
+        rt_warn("%s", b);
+    }
     uint64_t stack[64]; struct rt_callframe f;
     frame_from_args(v, &f, stack, 64);
     iosrt_call((void *)objc_msgSend, &f);
@@ -386,6 +421,14 @@ static const struct { const char *key, *enc; int layer; } native_props[] = {
     { "autoresizingMask", "Q", -1 }, { "currentPage", "q", -1 }, { "numberOfPages", "q", -1 }, { "selectedSegmentIndex", "q", -1 },
     { "contentHorizontalAlignment", "q", -1 }, { "contentVerticalAlignment", "q", -1 },
 };
+static const char *native_prop_type_in(Class c, const char *key) {
+    Class layer = (Class)rt_class_named("CALayer");
+    int is_layer = 0;
+    for (Class k = c; k && layer; k = k->superclass) if (k == layer) { is_layer = 1; break; }
+    for (size_t i = 0; i < sizeof native_props / sizeof *native_props; i++)
+        if (!strcmp(native_props[i].key, key) && (native_props[i].layer < 0 || native_props[i].layer == is_layer)) return native_props[i].enc;
+    return NULL;
+}
 static const char *native_prop_type(id self, const char *key) {
     Class layer = (Class)rt_class_named("CALayer");
     int is_layer = layer && rt_is_kind_of(self, layer);

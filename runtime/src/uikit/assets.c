@@ -240,6 +240,8 @@ static struct gfx_image *atlas_image(struct catalog *c, const struct rendition *
     if (!g) return NULL;
     if (c->natlas == 48) { gfx_image_release(c->atlas[0].img); memmove(c->atlas, c->atlas + 1, sizeof c->atlas[0] * 47); c->natlas--; }
     c->atlas[c->natlas].idx = idx; c->atlas[c->natlas++].img = g;
+    const char *dd = getenv("IOSRT_DUMP_ATLAS");   /* debugging aid: write decoded atlases as PNG */
+    if (dd) { char pth[1024]; snprintf(pth, sizeof pth, "%s/atlas_%zu_%dx%d.png", dd, idx, g->w, g->h); gfx_image_write_png(g, pth); }
     return g;
 }
 static struct gfx_image *decode_rendition(struct catalog *c, const struct rendition *r) {
@@ -259,6 +261,7 @@ static struct gfx_image *decode_rendition(struct catalog *c, const struct rendit
     const struct rendition *ar = find_by_attrs(c, want);
     struct gfx_image *atlas = ar ? atlas_image(c, ar) : NULL;
     if (!atlas || fx + fw > (uint32_t)atlas->w || fy + fh > (uint32_t)atlas->h || !fw || !fh) return NULL;
+    fy = (uint32_t)atlas->h - fy - fh;   /* the frame is in CoreGraphics coordinates: y from the bottom */
     struct gfx_image *g = gfx_image_new((int)fw, (int)fh);
     for (uint32_t y = 0; y < fh; y++) memcpy(g->px + (size_t)y * fw, atlas->px + (size_t)(fy + y) * atlas->w + fx, fw * 4);
     return g;

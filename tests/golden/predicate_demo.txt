@@ -1,0 +1,16 @@
+endswith[c] Image:                 normalImage selectedImage normalBackgroundImage PressedIMAGE
+beginswith normal:                 normalImage normalBackgroundImage
+contains[c] background:            normalBackgroundImage
+like *Color:                       titleColor
+matches regex:                     normalImage selectedImage
+not endswith Image:                frame titleColor PressedIMAGE
+age >= 18 AND name != Ann:         Céline
+%K < 40 OR name ==[c] 'bob':       Ann Bob
+tags.@count > 0:                   Ann Céline
+ANY tags == 'c':                   Céline
+name IN {'Bob','Ann'}:             Ann Bob
+age BETWEEN {20, 50}:              Ann Céline
+name ==[cd] 'celine':              Céline
+argumentArray age > 30:            Ann Céline
+evaluate 2.5 > %f(2.0): 1
+TRUEPREDICATE: 1, FALSEPREDICATE: 0

@@ -387,8 +387,10 @@ static void b_setTitle(id self, SEL s, id t, unsigned long state) { (void)s; id 
 static void b_setAttrTitle(id self, SEL s, id v, unsigned long state) { (void)s; BSET(attrTitle) if (v) { id str = RT_SEND0(id, v, "string"); b_setTitle(self, s, str, state); } }
 static void b_setTitleColor(id self, SEL s, id v, unsigned long state) { (void)s; BSET(titleColor) }
 static void b_setShadowColor(id self, SEL s, id v, unsigned long state) { (void)s; BSET(shadowColor) }
-static void b_setImage(id self, SEL s, id v, unsigned long state) { (void)s; BSET(image) }
-static void b_setBgImage(id self, SEL s, id v, unsigned long state) { (void)s; BSET(bgImage) }
+/* only images are kept: apps that set properties by key can hand over colours or insets */
+static int is_image(id v) { return !v || rt_is_kind_of(v, (Class)rt_class_named("UIImage")); }
+static void b_setImage(id self, SEL s, id v, unsigned long state) { (void)s; if (!is_image(v)) return; BSET(image) }
+static void b_setBgImage(id self, SEL s, id v, unsigned long state) { (void)s; if (!is_image(v)) return; BSET(bgImage) }
 /* state lookup falls back to normal like UIKit */
 static struct bcontent *bstate(id self, unsigned long state) { return &BT(self)->st[st_index(state)]; }
 #define BGET(fn, field) \

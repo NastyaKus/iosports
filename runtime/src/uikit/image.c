@@ -103,7 +103,10 @@ static id named_in_bundle(id bundle, id name) {
         img = rt_asset_image(bundle, name);
     }
     if (!img) {
-        if (rt_first_time(rt_str_utf8(name))) rt_log("UIImage imageNamed: '%s' not found", rt_str_utf8(name));
+        if (rt_first_time(rt_str_utf8(name))) {
+            if (getenv("IOSRT_TRACE_IMAGES")) rt_warn("UIImage imageNamed: '%s' not found", rt_str_utf8(name));
+            else rt_log("UIImage imageNamed: '%s' not found", rt_str_utf8(name));
+        }
         return NULL;
     }
     ((struct uiimage *)img)->name = objc_retain(name);
@@ -197,7 +200,12 @@ static id im_withTint(id self, SEL s, id color) {
 /* ---- drawing */
 void rt_uiimage_draw(id img, struct cgctx *c, CGRect r, float alpha, const float *tint) {
     struct uiimage *u = (struct uiimage *)img;
-    if (!u || !c || !u->cg) return;
+    if (!u || !c) return;
+    if (!rt_is_kind_of(img, RT_CLASS(UIImage))) {   /* an app handed a non-image to an image property */
+        if (rt_first_time(rt_class_name(img->isa))) rt_warn("not an image: %s drawn as a UIImage", rt_class_name(img->isa));
+        return;
+    }
+    if (!u->cg) return;
     if (u->renderingMode != 2) tint = NULL;   /* only AlwaysTemplate images are tinted */
     if (u->resizable && (u->caps.left > 0 || u->caps.right > 0 || u->caps.top > 0 || u->caps.bottom > 0)) {
         UIEdgeInsets px = { u->caps.top * u->scale, u->caps.left * u->scale, u->caps.bottom * u->scale, u->caps.right * u->scale };

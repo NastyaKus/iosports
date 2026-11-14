@@ -37,18 +37,30 @@ static id RT_SEND3_err(void);
 static void rt_schedule_perform_self(id self);
 
 /* ================================================================== NSPredicate */
-struct nspred { Class isa; void *block; id format; };
+struct nspred { Class isa; void *block; id format; void *tree; long parsed; };
+void *rt_predicate_parse(const char *fmt, const uint64_t *args, id argarray, int *ok);
+int rt_predicate_eval(void *tree, id obj);
 static id pr_withBlock(Class c, SEL s, void *b) { (void)s; id o = rt_alloc_instance(c, 0); ((struct nspred *)o)->block = _Block_copy(b); return objc_autorelease(o); }
-id rt_NSPredicate_predicateWithFormat(Class c, SEL s, id fmt, const uint64_t *args) {
-    (void)s; (void)args; id o = rt_alloc_instance(c, 0); ((struct nspred *)o)->format = objc_retain(fmt);
-    char key[300]; snprintf(key, sizeof key, "NSPredicate format '%s'", fmt ? rt_str_utf8(fmt) : "");
-    if (rt_first_time(key)) rt_warn("warning: %s is not evaluated (always true)", key);
+static id pr_make(Class c, id fmt, const uint64_t *args, id argarray) {
+    id o = rt_alloc_instance(c, 0); struct nspred *p = (struct nspred *)o;
+    p->format = objc_retain(fmt);
+    int ok = 0;
+    p->tree = rt_predicate_parse(fmt ? rt_str_utf8(fmt) : "", args, argarray, &ok);
+    p->parsed = ok;
+    if (!ok) {
+        char key[300]; snprintf(key, sizeof key, "NSPredicate format '%s'", fmt ? rt_str_utf8(fmt) : "");
+        if (rt_first_time(key)) rt_warn("warning: %s could not be parsed (evaluates as true)", key);
+    }
     return objc_autorelease(o);
 }
-static id pr_withValue(Class c, SEL s, long v) { (void)s; id o = rt_alloc_instance(c, 0); ((struct nspred *)o)->format = objc_retain(rt_str(v & 0xff ? "TRUEPREDICATE" : "FALSEPREDICATE")); return objc_autorelease(o); }
+id rt_NSPredicate_predicateWithFormat(Class c, SEL s, id fmt, const uint64_t *args) { (void)s; return pr_make(c, fmt, args, NULL); }
+static id pr_withFormatArray(Class c, SEL s, id fmt, id arr) { (void)s; return pr_make(c, fmt, NULL, arr); }
+static id pr_withFormatArgs(Class c, SEL s, id fmt, const uint64_t *va) { (void)s; return pr_make(c, fmt, va, NULL); }
+static id pr_withValue(Class c, SEL s, long v) { (void)s; return pr_make(c, rt_str(v & 0xff ? "TRUEPREDICATE" : "FALSEPREDICATE"), NULL, NULL); }
 static rt_bool pr_eval(id self, SEL s, id obj) {
     (void)s; struct nspred *p = (struct nspred *)self;
     if (p->block) return (((long (*)(void *, id, id))((struct rt_block *)p->block)->invoke)(p->block, obj, NULL) & 0xff) != 0;
+    if (p->parsed) return rt_predicate_eval(p->tree, obj) != 0;
     return !(p->format && !strcmp(rt_str_utf8(p->format), "FALSEPREDICATE"));
 }
 static rt_bool pr_evalBindings(id self, SEL s, id obj, id b) { (void)b; return pr_eval(self, s, obj); }
@@ -257,7 +269,8 @@ void rt_foundation_more3_init(void) {
     Class pr = RT_CLASS(NSPredicate);
     extern char iosrt_imp_predicateWithFormat[];
     CM(pr, "predicateWithBlock:", pr_withBlock); CM(pr, "predicateWithFormat:", iosrt_imp_predicateWithFormat);
-    CM(pr, "predicateWithValue:", pr_withValue);
+    CM(pr, "predicateWithValue:", pr_withValue); CM(pr, "predicateWithFormat:argumentArray:", pr_withFormatArray);
+    CM(pr, "predicateWithFormat:arguments:", pr_withFormatArgs);
     IM(pr, "evaluateWithObject:", pr_eval); IM(pr, "evaluateWithObject:substitutionVariables:", pr_evalBindings);
     IM(pr, "predicateFormat", pr_format);
     IM(RT_CLASS(NSArray), "filteredArrayUsingPredicate:", arr_filtered); IM(RT_CLASS(NSMutableArray), "filterUsingPredicate:", marr_filter);

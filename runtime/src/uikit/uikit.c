@@ -644,7 +644,11 @@ static id g_screen, g_device;
 static id sc_main(Class c, SEL s) { (void)s; if (!g_screen) g_screen = rt_alloc_instance(c, 0); return g_screen; }
 static id sc_screens(Class c, SEL s) { id m = sc_main(c, s); return objc_autorelease(rt_array_new(&m, 1)); }
 static CGRect sc_bounds(id self, SEL s) { (void)self; (void)s; return (CGRect){ { 0, 0 }, { rt_scr_w, rt_scr_h } }; }
-static CGRect sc_nativeBounds(id self, SEL s) { (void)self; (void)s; return (CGRect){ { 0, 0 }, { rt_scr_w * rt_scr_scale, rt_scr_h * rt_scr_scale } }; }
+/* nativeBounds is always the portrait-up pixel size (750x1334 on an iPhone 6 held either way) */
+static CGRect sc_nativeBounds(id self, SEL s) {
+    (void)self; (void)s; double w = rt_scr_w * rt_scr_scale, h = rt_scr_h * rt_scr_scale;
+    return (CGRect){ { 0, 0 }, { fmin(w, h), fmax(w, h) } };
+}
 static double sc_scale(id self, SEL s) { (void)self; (void)s; return rt_scr_scale; }
 static double sc_brightness(id self, SEL s) { (void)self; (void)s; return 0.5; }
 static long sc_fps(id self, SEL s) { (void)self; (void)s; return 60; }
@@ -1329,6 +1333,15 @@ static void dump_view(id v, int depth) {
     if (bg && n > 1 && n < (int)sizeof line - 64) {
         float c[4]; rt_color_rgba(bg, c);
         if (c[3] > 0.01f) n += snprintf(line + n - 1, sizeof line - (size_t)n, " bg=%.2f,%.2f,%.2f,%.2f\n", c[0], c[1], c[2], c[3]) - 1;
+    }
+    /* images of buttons and image views (size, or "nil") */
+    static const char *const imgsels[] = { "currentImage", "currentBackgroundImage", "image" };
+    for (int k = 0; k < 3 && n > 1 && n < (int)sizeof line - 48; k++) {
+        if (!rt_responds(v, rt_sel(imgsels[k]))) continue;
+        if (k == 2 && rt_responds(v, rt_sel("currentImage"))) continue;
+        id im = RT_SEND0(id, v, imgsels[k]);
+        CGSize sz = im ? RT_SEND0(CGSize, im, "size") : (CGSize){ 0, 0 };
+        if (im) n += snprintf(line + n - 1, sizeof line - (size_t)n, " %s=%gx%g\n", k == 1 ? "bgimg" : "img", sz.width, sz.height) - 1;
     }
     if (n > 1 && n < (int)sizeof line - 32) n += snprintf(line + n - 1, sizeof line - (size_t)n, " %p\n", (void *)v) - 1;
     rt_out(2, line, (size_t)n);

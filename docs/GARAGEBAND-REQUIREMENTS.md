@@ -77,6 +77,12 @@ song screen and the Keyboard instrument's controller.
 25. `-[NSValue hash]` consistent with `isEqual:` (key interactions are stored by
     `valueWithNonretainedObject:` of the touch; without it keys stayed pressed).
 
+26. Packed atlases in `Assets.car`: the link rectangle's y is measured from the bottom.
+27. NSPredicate formats evaluated for real (the skin engine filters its keys with
+    `SELF endswith[c] %@`; always-true made it eat `frame` keys as images).
+28. Method signatures for the runtime's own methods (skins call `set<X>:forState:` through
+    NSInvocation), `UIScreen.nativeBounds` in portrait.
+
 Then the Keyboard screen appears (Grand Piano, Sustain, keys C3–C4) and touches on the keys
 play the sampled piano through RemoteIO (one finger and two-finger chords in a trace).
 

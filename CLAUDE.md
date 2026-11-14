@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 78/78
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 80/80
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -42,7 +42,9 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 `IOSRT_HEADLESS_FRAMES`, `IOSRT_SCRIPT`, `IOSRT_PNG_OUT`, `IOSRT_LOG_PLAIN=1`,
 `IOSRT_DUMP_VIEWS=1` (дерево view: text/alpha/bg/адрес), `IOSRT_TRACE_MSG=sel,...`,
 `IOSRT_TRACE_CLASS=Cls,...` (все сообщения классу), `IOSRT_TRACE_MSG_DUMP=N`, `IOSRT_TRACE_FILES=подстрока`,
-`IOSRT_TRACE_KVC=1`, `IOSRT_TRACE_EH=1`, `TRACE_ARGS="--screen 873x393"` для trace_app.sh.
+`IOSRT_TRACE_KVC=1`, `IOSRT_TRACE_EH=1`, `IOSRT_TRACE_INVOKE=1` (NSInvocation), `IOSRT_TRACE_IMAGES=1`
+(ненайденные картинки), `IOSRT_DUMP_ATLAS=dir` (атласы Assets.car в PNG), `TRACE_ARGS="--screen 873x393"` для trace_app.sh.
+Картинку из чужого бандла проверить: свой бинарь из `sdk/build-app.sh` положить в `.app` в scratchpad и запустить его путь.
 NIBArchive: тип 4 = NO, 5 = YES. Скриптовый `wait:ms` крутит run loop; `pdown/pmove/pup:id,x,y` — доп. пальцы.
 `ipsw` для анализа собран в `scratchpad/ipsw/ipsw` (`class-dump --arch arm64`).
 
@@ -59,6 +61,8 @@ NIBArchive: тип 4 = NO, 5 = YES. Скриптовый `wait:ms` крутит 
 | Полный экран в оболочке | `RunActivity` (ориентация из `nativeIsLandscape`, immersive, лог по громкости вверх), `IOSRT_FILL` в `choose_compat_screen` |
 | KVC (структуры в NSValue, типы нативных свойств) | `foundation/more.c` (`native_props`, `kvc_call_setter/getter`) |
 | NSDirectoryEnumerator, ресурсы NSURL | `foundation/fileenum.c` |
+| NSPredicate (разбор формата и вычисление) | `foundation/predicate.c`, обёртка в `foundation/more3.c` |
+| Сигнатуры нативных методов для NSInvocation | `foundation/more.c` `native_sig` |
 | View controllers, навигация, таблицы | `uikit/controls2.c` (`nav_*`, `vc_*`, `rt_vc_appear`, `rt_vc_load_view`) |
 | NIB / keyed archives / storyboard | `uikit/nib.c`, `foundation/archiver.c`, `uikit/storyboard.c` |
 | Слои и композитинг | `uikit/layer.c` (`rt_layer_render`, `draw_contents`) |
