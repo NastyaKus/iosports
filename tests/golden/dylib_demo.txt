@@ -1,0 +1,18 @@
+helper: initializer
+DemoKit: +[DKGreeter load]
+DemoKit: initializer (helper_value=40)
+main: +[Fancy load]
+main: demokit_add(2,3)=5 counter=2
+main: helper through DemoKit=80
+main: Hello from DemoKit (fancy)
+main: kit name=DemoKit
+main: HELLO!
+main: shared inline counter 1 2
+main: dladdr -> DemoKit demokit_add
+main: images=3
+main: bundleWithIdentifier -> DemoKit.framework
+main: plugin loaded=0
+plugin: initializer
+main: principal class DemoPlugin says DemoPlugin, loaded=1
+main: dlsym plugin_value -> 1234
+main: images=4

@@ -21,6 +21,8 @@
 #define CPU_TYPE_X86_64 0x01000007
 #define CPU_SUBTYPE_ARM64E 2
 #define MH_EXECUTE 2
+#define MH_DYLIB   6
+#define MH_BUNDLE  8
 
 #define LC_SEGMENT_64          0x19
 #define LC_SYMTAB              0x02
@@ -34,10 +36,37 @@
 #define LC_MAIN                0x80000028
 #define LC_ENCRYPTION_INFO_64  0x2c
 #define LC_DYLD_CHAINED_FIXUPS 0x80000034
+#define LC_DYLD_EXPORTS_TRIE   0x80000033
+#define LC_ID_DYLIB            0x0d
+#define LC_RPATH               0x8000001c
 
 struct rt_image *rt_main_image;
-static struct rt_image *g_images[8];
-static int g_nimages;
+/* every mapped guest image (registration order: the executable first) and the
+ * initialisation order (an image is appended once its dependencies are done) */
+static struct rt_image **g_images, **g_init;
+static int g_nimages, g_ninit, g_capimages;
+static pthread_mutex_t g_img_lock = PTHREAD_MUTEX_INITIALIZER;
+int rt_image_count(void) { return g_nimages; }
+struct rt_image *rt_image_at(int i) { return i >= 0 && i < g_nimages ? g_images[i] : NULL; }
+int rt_image_init_count(void) { return g_ninit; }
+struct rt_image *rt_image_init_at(int i) { return i >= 0 && i < g_ninit ? g_init[i] : NULL; }
+/* g_ninit <= g_nimages, so both lists share one capacity */
+static void register_mapped(struct rt_image *img) {
+    pthread_mutex_lock(&g_img_lock);
+    if (g_nimages == g_capimages) {
+        g_capimages = g_capimages ? g_capimages * 2 : 32;
+        g_images = realloc(g_images, sizeof *g_images * (size_t)g_capimages);
+        g_init = realloc(g_init, sizeof *g_init * (size_t)g_capimages);
+    }
+    g_images[g_nimages++] = img;
+    pthread_mutex_unlock(&g_img_lock);
+}
+static void register_fixed(struct rt_image *img) {
+    pthread_mutex_lock(&g_img_lock);
+    g_init[g_ninit++] = img;
+    pthread_mutex_unlock(&g_img_lock);
+}
+static char *xstrndup(const char *s, size_t n) { char *r = rt_xmalloc(n + 1); memcpy(r, s, n); r[n] = 0; return r; }
 
 static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 static uint64_t be64(const uint8_t *p) { return (uint64_t)be32(p) << 32 | be32(p + 4); }
@@ -126,7 +155,10 @@ static char *short_lib_name(const char *path) {
 static int parse_commands(struct rt_image *img, char *err, size_t errlen) {
     uint8_t *f = img->file;
     uint32_t filetype = le32(f + 12), ncmds = le32(f + 16), sizeofcmds = le32(f + 20);
-    if (filetype != MH_EXECUTE) { snprintf(err, errlen, "Mach-O filetype %u is not an executable (dylibs/bundles not supported yet)", filetype); return -1; }
+    if (filetype != MH_EXECUTE && filetype != MH_DYLIB && filetype != MH_BUNDLE) {
+        snprintf(err, errlen, "Mach-O filetype %u is not an executable, dylib or bundle", filetype); return -1;
+    }
+    img->filetype = filetype;
     if (32 + (size_t)sizeofcmds > img->file_size) { snprintf(err, errlen, "load commands out of bounds"); return -1; }
     const uint8_t *p = f + 32, *end = p + sizeofcmds;
     for (uint32_t i = 0; i < ncmds; i++) {
@@ -159,7 +191,20 @@ static int parse_commands(struct rt_image *img, char *err, size_t errlen) {
             img->bind_off = le32(p + 16); img->bind_size = le32(p + 20);
             img->weak_off = le32(p + 24); img->weak_size = le32(p + 28);
             img->lazy_off = le32(p + 32); img->lazy_size = le32(p + 36);
+            if (!img->export_size) { img->export_off = le32(p + 40); img->export_size = le32(p + 44); }
             break;
+        case LC_DYLD_EXPORTS_TRIE:
+            img->export_off = le32(p + 8); img->export_size = le32(p + 12);
+            break;
+        case LC_ID_DYLIB: case LC_RPATH: {
+            uint32_t off = le32(p + 8);
+            if (off >= sz) break;
+            char *str = xstrndup((const char *)p + off, strnlen((const char *)p + off, sz - off));
+            if (cmd == LC_ID_DYLIB) { free(img->install_name); img->install_name = str; }
+            else if (img->nrpaths < 16) img->rpaths[img->nrpaths++] = str;
+            else free(str);
+            break;
+        }
         case LC_DYLD_CHAINED_FIXUPS:
             img->has_chained = 1;
             img->chained_off = le32(p + 8); img->chained_size = le32(p + 12);
@@ -181,6 +226,8 @@ static int parse_commands(struct rt_image *img, char *err, size_t errlen) {
                 char tmp[512]; size_t n = strnlen((const char *)p + off, sz - off);
                 if (n >= sizeof tmp) n = sizeof tmp - 1;
                 memcpy(tmp, p + off, n); tmp[n] = 0;
+                img->dylib_flags[img->ndylibs] = cmd == LC_LOAD_WEAK_DYLIB ? RT_DYLIB_WEAK : cmd == LC_REEXPORT_DYLIB ? RT_DYLIB_REEXPORT :
+                                                 cmd == LC_LOAD_UPWARD_DYLIB ? RT_DYLIB_UPWARD : 0;
                 img->dylibs[img->ndylibs++] = rt_xstrdup(tmp);
             }
             break;
@@ -189,6 +236,7 @@ static int parse_commands(struct rt_image *img, char *err, size_t errlen) {
         }
         p += sz;
     }
+    if ((uint64_t)img->export_off + img->export_size > img->file_size) img->export_size = 0;
     if (img->symoff && ((uint64_t)img->symoff + (uint64_t)img->nsyms * 16 > img->file_size || (uint64_t)img->stroff + img->strsize > img->file_size)) {
         img->nsyms = 0;
     }
@@ -280,6 +328,183 @@ const char *rt_image_symbolize(uint64_t addr, uint64_t *off) {
     return NULL;
 }
 
+struct rt_image *rt_image_for_addr(uint64_t addr) {
+    for (int i = 0; i < g_nimages; i++) {
+        struct rt_image *im = g_images[i];
+        uint64_t b = (uint64_t)(uintptr_t)im->map;
+        if (addr >= b && addr < b + im->map_size) return im;
+    }
+    return NULL;
+}
+struct rt_image *rt_image_for_header(const void *mh) {
+    for (int i = 0; i < g_nimages; i++) if (g_images[i]->header_addr == (uint64_t)(uintptr_t)mh) return g_images[i];
+    return NULL;
+}
+
+/* ------------------------------------------------------------ exports */
+static uint64_t uleb(const uint8_t **p, const uint8_t *end) {
+    uint64_t r = 0; int sh = 0;
+    while (*p < end) {
+        uint8_t b = *(*p)++;
+        if (sh < 64) r |= (uint64_t)(b & 0x7f) << sh;
+        sh += 7;
+        if (!(b & 0x80)) break;
+    }
+    return r;
+}
+/* walk the export trie; returns the terminal info of `name` or NULL */
+static const uint8_t *trie_find(const uint8_t *start, const uint8_t *end, const char *name) {
+    const uint8_t *node = start;
+    for (int depth = 0; depth < 512 && node < end; depth++) {
+        const uint8_t *q = node;
+        uint64_t term = uleb(&q, end);
+        if (!*name) return term ? q : NULL;
+        const uint8_t *c = q + term;
+        if (c >= end) return NULL;
+        unsigned n = *c++;
+        const uint8_t *next = NULL;
+        for (unsigned i = 0; i < n && c < end; i++) {
+            const char *edge = (const char *)c;
+            size_t l = strnlen(edge, (size_t)(end - c));
+            c += l + 1;
+            uint64_t off = uleb(&c, end);
+            if (!strncmp(edge, name, l)) { name += l; next = start + off; break; }
+        }
+        if (!next) return NULL;
+        node = next;
+    }
+    return NULL;
+}
+static void *symtab_export(struct rt_image *img, const char *name) {
+    for (uint32_t k = 0; k < img->nsyms; k++) {
+        const uint8_t *nl = img->file + img->symoff + (size_t)k * 16;
+        uint8_t type = nl[4];
+        if (type & 0xe0) continue;                                /* stab */
+        if ((type & 0x0e) != 0x0e || !(type & 0x01)) continue;  /* defined in a section + external */
+        uint32_t sx = le32(nl);
+        if (sx >= img->strsize || strcmp((const char *)img->file + img->stroff + sx, name)) continue;
+        return (void *)(uintptr_t)(le64(nl + 8) + (uint64_t)img->slide);
+    }
+    return NULL;
+}
+static void *image_export(struct rt_image *img, const char *name, int depth) {
+    if (!img || depth > 8) return NULL;
+    if (img->export_size) {
+        const uint8_t *t = img->file + img->export_off, *end = t + img->export_size;
+        const uint8_t *q = trie_find(t, end, name);
+        if (q) {
+            uint64_t flags = uleb(&q, end);
+            if (flags & 0x08) {                       /* EXPORT_SYMBOL_FLAGS_REEXPORT */
+                uint64_t ord = uleb(&q, end);
+                const char *imp = (const char *)q;
+                if (!*imp) imp = name;
+                if (ord >= 1 && ord <= (uint64_t)img->ndylibs) {
+                    if (img->deps[ord - 1]) return image_export(img->deps[ord - 1], imp, depth + 1);
+                    const struct iosrt_export *e = rt_export_find(imp);
+                    return e ? e->addr : NULL;
+                }
+                return NULL;
+            }
+            uint64_t addr = uleb(&q, end);
+            if ((flags & 3) == 2) return (void *)(uintptr_t)addr;   /* absolute */
+            return (void *)(uintptr_t)(img->header_addr + addr);   /* regular, thread-local, stub-and-resolver stub */
+        }
+    } else {
+        void *a = symtab_export(img, name);
+        if (a) return a;
+    }
+    for (int i = 0; i < img->ndylibs; i++)
+        if ((img->dylib_flags[i] & RT_DYLIB_REEXPORT) && img->deps[i]) {
+            void *a = image_export(img->deps[i], name, depth + 1);
+            if (a) return a;
+        }
+    return NULL;
+}
+void *rt_image_export(struct rt_image *img, const char *name) { return image_export(img, name, 0); }
+
+/* -------------------------------------------------------- dependencies */
+static int is_file(const char *p) { struct stat st; return stat(p, &st) == 0 && S_ISREG(st.st_mode); }
+static void dir_of(const char *path, char *out, size_t n) {
+    snprintf(out, n, "%s", path);
+    char *sl = strrchr(out, '/');
+    if (sl) *sl = 0; else snprintf(out, n, ".");
+}
+static struct rt_image *g_root;   /* the executable being loaded (its @executable_path and rpaths) */
+/* @executable_path/@loader_path prefix expansion against `loader` */
+static int expand_at(const char *p, const struct rt_image *loader, char *out, size_t n) {
+    char d[4096];
+    if (!strncmp(p, "@executable_path", 16)) { dir_of(g_root ? g_root->path : loader->path, d, sizeof d); snprintf(out, n, "%s%s", d, p + 16); return 1; }
+    if (!strncmp(p, "@loader_path", 12)) { dir_of(loader->path, d, sizeof d); snprintf(out, n, "%s%s", d, p + 12); return 1; }
+    if (p[0] == '@') return 0;
+    snprintf(out, n, "%s", p);
+    return 1;
+}
+/* Where does the guest find this library? Only paths inside the app (@-relative) are
+ * loaded as guest code; /System and /usr/lib libraries are provided by iosrt itself. */
+static int find_dylib(struct rt_image *img, const char *dep, char *out, size_t n) {
+    char cand[4200];
+    if (!strncmp(dep, "@rpath/", 7)) {
+        const struct rt_image *owners[2] = { img, g_root && g_root != img ? g_root : NULL };
+        for (int o = 0; o < 2 && owners[o]; o++)
+            for (int i = 0; i < owners[o]->nrpaths; i++) {
+                char rp[4096];
+                if (!expand_at(owners[o]->rpaths[i], owners[o], rp, sizeof rp)) continue;
+                snprintf(cand, sizeof cand, "%s/%s", rp, dep + 7);
+                if (is_file(cand)) goto found;
+            }
+        /* no usable LC_RPATH: the usual layouts (app/Frameworks, next to the loader) */
+        char d[4096];
+        dir_of(g_root ? g_root->path : img->path, d, sizeof d);
+        snprintf(cand, sizeof cand, "%s/Frameworks/%s", d, dep + 7);
+        if (is_file(cand)) goto found;
+        dir_of(img->path, d, sizeof d);
+        snprintf(cand, sizeof cand, "%s/%s", d, dep + 7);
+        if (is_file(cand)) goto found;
+        return 0;
+    }
+    if (dep[0] != '@') return 0;
+    if (!expand_at(dep, img, cand, sizeof cand) || !is_file(cand)) return 0;
+found:
+    if (!realpath(cand, out)) snprintf(out, n, "%s", cand);
+    return 1;
+}
+static struct rt_image *find_loaded(const char *real) {
+    for (int i = 0; i < g_nimages; i++) {
+        char r[4096];
+        const char *p = g_images[i]->path;
+        if (realpath(p, r)) p = r;
+        if (!strcmp(p, real)) return g_images[i];
+    }
+    return NULL;
+}
+static const char *short_path(const char *p) {   /* "X.app/Frameworks/Y.framework/Y" -> from "Frameworks/" */
+    const char *f = strstr(p, "/Frameworks/");
+    if (f) return f + 1;
+    const char *b = strrchr(p, '/');
+    return b ? b + 1 : p;
+}
+static int load_deps(struct rt_image *img, const struct rt_load_opts *o, char *err, size_t errlen) {
+    for (int i = 0; i < img->ndylibs; i++) {
+        char real[4096];
+        if (!find_dylib(img, img->dylibs[i], real, sizeof real)) {
+            if (img->dylibs[i][0] == '@' && !(img->dylib_flags[i] & RT_DYLIB_WEAK))
+                rt_log("%s: %s not found in the bundle, iosrt provides it", short_path(img->path), img->dylibs[i]);
+            continue;
+        }
+        struct rt_image *d = find_loaded(real);
+        if (!d) {
+            d = rt_xcalloc(1, sizeof *d);
+            char e2[1024];
+            if (rt_image_load(d, real, o, e2, sizeof e2)) {
+                snprintf(err, errlen, "%s (needed by %s)", e2, short_path(img->path));
+                return -1;
+            }
+        }
+        img->deps[i] = d;
+    }
+    return 0;
+}
+
 int rt_image_load_buffer(struct rt_image *img, const char *path, uint8_t *data, size_t size,
                          const struct rt_load_opts *o, char *err, size_t errlen) {
     memset(img, 0, sizeof *img);
@@ -292,19 +517,26 @@ int rt_image_load_buffer(struct rt_image *img, const char *path, uint8_t *data, 
     img->file_size = ssz;
     if (parse_commands(img, err, errlen)) return -1;
     if (img->cryptid != 0) {
-        snprintf(err, errlen, "binary is FairPlay-encrypted (cryptid=%u); only decrypted or self-built apps can run", img->cryptid);
+        if (img->filetype == MH_EXECUTE)
+            snprintf(err, errlen, "binary is FairPlay-encrypted (cryptid=%u); only decrypted or self-built apps can run", img->cryptid);
+        else
+            snprintf(err, errlen, "%s is FairPlay-encrypted (cryptid=%u); every binary of the app must be decrypted", short_path(path), img->cryptid);
         return -1;
     }
-    if (!img->has_main) { snprintf(err, errlen, "no LC_MAIN (LC_UNIXTHREAD-style executables are not supported)"); return -1; }
+    if (img->filetype == MH_EXECUTE && !img->has_main) { snprintf(err, errlen, "no LC_MAIN (LC_UNIXTHREAD-style executables are not supported)"); return -1; }
     if (map_segments(img, err, errlen)) return -1;
-    if (g_nimages < 8) g_images[g_nimages++] = img;
-    rt_log("mapped %s at %p slide=0x%lx (%d segs, %d sects, %d dylibs)", path, (void *)img->map, (long)img->slide,
-           img->nsegs, img->nsects, img->ndylibs);
+    if (img->filetype == MH_EXECUTE && !g_root) g_root = img;
+    register_mapped(img);
+    rt_log("mapped %s at %p slide=0x%lx (%d segs, %d sects, %d dylibs)", img->filetype == MH_EXECUTE ? path : short_path(path),
+           (void *)img->map, (long)img->slide, img->nsegs, img->nsects, img->ndylibs);
+    if (load_deps(img, o, err, errlen)) return -1;
     int rc;
     if (img->has_chained) rc = rt_fixups_chained(img, err, errlen);
     else if (img->has_dyld_info) rc = rt_fixups_dyldinfo(img, err, errlen);
     else { snprintf(err, errlen, "no dyld fixup information"); rc = -1; }
     if (rc) return -1;
+    img->state = RT_IMG_FIXED;
+    register_fixed(img);
     return 0;
 }
 
@@ -314,6 +546,39 @@ int rt_image_load(struct rt_image *img, const char *path, const struct rt_load_o
     int rc = rt_image_load_buffer(img, path, data, size, o, err, errlen);
     free(data);
     return rc;
+}
+
+/* run-time loading (dlopen, NSBundle -load): map + fix up the image and whatever it
+ * needs; the caller (rt_image_open in run.c) makes the new images ready and runs them */
+struct rt_image *rt_image_load_path(const char *path, char *err, size_t errlen) {
+    char real[4096];
+    if (!realpath(path, real)) { snprintf(err, errlen, "%s: not found", path); return NULL; }
+    struct rt_image *img = find_loaded(real);
+    if (img) return img;
+    img = rt_xcalloc(1, sizeof *img);
+    struct rt_load_opts o = { 0, 0 };
+    if (rt_image_load(img, real, &o, err, errlen)) return NULL;
+    return img;
+}
+/* dlopen-style lookup of a library name: absolute path, @-path relative to the executable,
+ * or a bare file name searched in the app's Frameworks directory */
+int rt_image_find_file(const char *name, char *out, size_t n) {
+    if (name[0] == '@' && g_root) return find_dylib(g_root, name, out, n);
+    if (is_file(name)) { if (!realpath(name, out)) snprintf(out, n, "%s", name); return 1; }
+    if (g_root && !strchr(name, '/')) {
+        char d[4096], c[4200];
+        dir_of(g_root->path, d, sizeof d);
+        snprintf(c, sizeof c, "%s/Frameworks/%s", d, name);
+        if (is_file(c)) { if (!realpath(c, out)) snprintf(out, n, "%s", c); return 1; }
+    }
+    return 0;
+}
+
+/* forget every image (the Android shell builds several reports in one process) */
+void rt_images_reset(void) {
+    pthread_mutex_lock(&g_img_lock);
+    g_nimages = g_ninit = 0; g_root = NULL;
+    pthread_mutex_unlock(&g_img_lock);
 }
 
 /* exported helper used by fixup code */

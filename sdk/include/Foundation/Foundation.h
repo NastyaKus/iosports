@@ -298,6 +298,15 @@ __attribute__((objc_root_class))
 @end
 @interface NSBundle : NSObject
 + (NSBundle *)mainBundle;
++ (NSBundle *)bundleForClass:(Class)c;
++ (NSBundle *)bundleWithPath:(NSString *)path;
++ (NSBundle *)bundleWithIdentifier:(NSString *)ident;
+- (BOOL)load;
+@property (readonly, getter=isLoaded) BOOL loaded;
+@property (readonly) Class principalClass;
+@property (readonly, copy) NSString *builtInPlugInsPath;
+@property (readonly, copy) NSString *privateFrameworksPath;
+@property (readonly, copy) NSString *executablePath;
 @property (readonly, copy) NSString *bundlePath;
 @property (readonly, copy) NSString *resourcePath;
 @property (readonly, copy) NSString *bundleIdentifier;

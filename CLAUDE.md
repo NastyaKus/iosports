@@ -19,9 +19,9 @@ CoreText, AudioToolbox и другие фреймворки реализован
   В доках — только агрегаты.
 - Не подменять задачу «похожим Android-приложением». Всё делается как общая
   часть рантайма плюс свои сэмплы в `samples/`.
-- Ветка `ccr-f2eafec3-fvz7zc`. Коммиты заканчиваются строками
+- Ветка `ccr-a8cecff6-ih2y83` (GarageBand; прежняя работа — `ccr-f2eafec3-fvz7zc`, слита в `main`). Коммиты заканчиваются строками
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` и
-  `Claude-Session: https://claude.ai/code/session_01QzS8eQHQpD67mB1jEdk3Vr`.
+  `Claude-Session: https://claude.ai/code/session_01QzS8eMWrNPGCQVRWUegHTX`.
   Модельных ID в коде, доках и коммитах быть не должно.
 - В конце фазы: тесты, коммит, push, APK Кириллу (SendUserFile).
 
@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 63/63
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 71/71
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -47,6 +47,7 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Что | Где |
 |---|---|
 | Экспорты HLE: `SYM(lib, _name, impl)`, `CLASS(...)` | `runtime/src/exports/*.def`; `uikit.def` генерит `tools/gen_uikit_def.py` (классы `*Impl` и `PRIVATE_*` пропускаются), `cxx_gen.def` — `tools/gen_cxx_def.py`, tbd для SDK — `tools/gen_tbd.py` |
+| Dylib/фреймворки: реестр образов, `@rpath`, export trie, `rt_image_open` | `loader/macho.c` (`load_deps`, `find_dylib`, `image_export`), биндинг по ordinal — `fixups.c` `rt_resolve_bind`; подготовка/инициализация образов — `run.c` (`prepare_images`, `initialize_image`) |
 | Разрешение символов, fallback через dlsym | `loader/symbols.c` `rt_resolve_symbol` → `rt_platform_dlsym_fallback` (`platform/android.c`, слабый дефолт в `util.c`) |
 | Классы и методы в C | `NEWCLASS`, `IM`, `CM` (`uikit/uikit_internal.h`), `RT_SEND0..3`, `RT_CLASS`, `RT_DEFINE_CLASS` (`internal.h`) |
 | Платформа (вывод, кадр, звук) | `struct rt_platform` в `internal.h`, Android — `platform/android.c` |
@@ -62,6 +63,12 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Акселерометр | `motion/motion.c` (UIAccelerometer, CMMotionManager, NDK-датчик), `exports/motion.def` |
 | Отчёт совместимости (`--report`, вердикт) | `run.c` `report_bundle()` |
 | Старый GNU libstdc++ (list, rb-tree, throw) | `cxx/cxx_abi.c`, экспорты в `exports/cxx.def` |
+
+## Окружение (контейнер пустой после рестарта)
+
+`apt-get install qemu-user-static libc6-dev-arm64-cross gcc-aarch64-linux-gnu g++-aarch64-linux-gnu`;
+Android cmdline-tools в `/opt/android-sdk`, затем
+`sdkmanager "ndk;27.2.12479018" "build-tools;35.0.0" "platforms;android-35"`.
 
 ## Подводные камни ABI
 
@@ -94,6 +101,13 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 часов справа на панели — (296,537); Help в меню — (160,518); «Track basics» в
 Help — (100,497); в туториале Next — (284,546), Close — (279,23).
 
+## GarageBand 2.2.2 (текущая цель, план: `/root/.claude/plans/floating-questing-pumpkin.md`)
+
+Первая цель — главный экран (браузер инструментов) с тачами; звук и инструменты — следующая итерация.
+Нужен расшифрованный IPA (все бинари с `cryptid=0`), ждём ссылку на Google Drive.
+✅ загрузка dylib/фреймворков. Дальше: раскрутка C++/ObjC исключений, TLV,
+анализ IPA (`--report`), Assets.car (`uikit/assets.c` — пока заглушка), Auto Layout.
+
 ## План (порядок согласован с Кириллом)
 
 1. Фаза 3b (идёт): ✅ панель Loopy, ✅ JS в UIWebView, ✅ OpenGL ES, ✅ AudioQueue,
@@ -101,7 +115,7 @@ Help — (100,497); в туториале Next — (284,546), Close — (279,23)
    AudioServices, OpenAL, ExtAudioFile, AudioConverter, микрофон) → Keychain,
    GameKit/StoreKit «недоступно». Детальный план:
    `/root/.claude/plans/root-claude-uploads-1d44effc-ef14-59e7-dapper-shannon.md`.
-2. Фаза 3c: загрузка `MH_DYLIB` из `.app/Frameworks` (GunLayer `enhance.framework`,
+2. ✅ Фаза 3c: загрузка `MH_DYLIB` из `.app/Frameworks` (GunLayer `enhance.framework`,
    основа под Swift).
 3. Потом сеть, Core Data, клавиатура.
 

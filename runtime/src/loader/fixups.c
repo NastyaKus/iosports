@@ -43,6 +43,25 @@ static const char *ordinal_lib(struct rt_image *img, int64_t ord, char *tmp, siz
     return "?";
 }
 
+/* Two-level namespace: a bind names the library (ordinal) that must define the symbol.
+ * Guest dylibs of the app answer from their exports; everything else is iosrt's. */
+void *rt_resolve_bind(struct rt_image *img, const char *name, int64_t ord, int weak_import) {
+    char libtmp[128];
+    if (ord > 0 && ord <= img->ndylibs && img->deps[ord - 1]) {
+        void *a = rt_image_export(img->deps[ord - 1], name);
+        if (a) { img->n_resolved++; return a; }
+    } else if ((ord == -2 || ord == -3) && rt_image_count() > 1) {
+        /* flat / weak lookup: the first image (executable first) that defines it;
+         * for weak definitions iosrt's own copy (libc++ etc.) still wins */
+        if (ord == -2 || !rt_export_find(name))
+            for (int i = 0; i < rt_image_count(); i++) {
+                void *a = rt_image_export(rt_image_at(i), name);
+                if (a) { img->n_resolved++; return a; }
+            }
+    }
+    return rt_resolve_symbol(img, name, ordinal_lib(img, ord, libtmp, sizeof libtmp), weak_import);
+}
+
 static uint64_t *seg_ptr(struct rt_image *img, int seg, uint64_t off) {
     if (seg < 0 || seg >= img->nsegs) return NULL;
     struct rt_segment *s = &img->segs[seg];
@@ -83,19 +102,20 @@ static int do_rebase(struct rt_image *img, char *err, size_t errlen) {
 }
 
 extern int rt_bind_kind;   /* 0 unknown (chained), 1 non-lazy (GOT/data), 2 lazy (stub -> function) */
+/* lazy: 0 non-lazy binds, 1 lazy binds, 2 weak binds (C++ coalescing across images) */
 static int do_bind(struct rt_image *img, uint32_t foff, uint32_t fsize, int lazy, char *err, size_t errlen) {
     if (!fsize) return 0;
-    rt_bind_kind = lazy ? 2 : 1;
+    int weak = lazy == 2;
+    rt_bind_kind = lazy == 1 ? 2 : 1;
     if ((uint64_t)foff + fsize > img->file_size) { snprintf(err, errlen, "bind info out of bounds"); return -1; }
     const uint8_t *p = img->file + foff, *end = p + fsize;
     int seg = 0; uint64_t off = 0; int64_t ord = 0, addend = 0;
     const char *sym = NULL; int weak_import = 0;
     const char *cached_sym = NULL; void *cached_addr = NULL;
-    char libtmp[128];
     while (p < end) {
         uint8_t b = *p++, op = b & 0xf0, imm = b & 0x0f;
         switch (op) {
-        case 0x00: if (!lazy) return 0; break;
+        case 0x00: if (lazy != 1) return 0; break;
         case 0x10: ord = imm; break;
         case 0x20: ord = (int64_t)uleb(&p, end); break;
         case 0x30: ord = imm ? (int64_t)(int8_t)(0xf0 | imm) : 0; break;
@@ -116,9 +136,13 @@ static int do_bind(struct rt_image *img, uint32_t foff, uint32_t fsize, int lazy
                 void *addr;
                 if (sym == cached_sym) addr = cached_addr;
                 else {
-                    addr = rt_resolve_symbol(img, sym, ordinal_lib(img, ord, libtmp, sizeof libtmp), weak_import);
+                    if (weak) {         /* the first image (executable first) that defines it */
+                        addr = NULL;
+                        for (int k = 0; k < rt_image_count() && !addr; k++) addr = rt_image_export(rt_image_at(k), sym);
+                    } else addr = rt_resolve_bind(img, sym, ord, weak_import);
                     cached_sym = sym; cached_addr = addr;
                 }
+                if (weak && !addr) { off += 8 + skip; continue; }
                 *ptr = (uint64_t)(uintptr_t)addr + (uint64_t)addend;
                 img->n_binds++;
                 off += 8 + skip;
@@ -138,8 +162,9 @@ int rt_fixups_dyldinfo(struct rt_image *img, char *err, size_t errlen) {
     if (do_rebase(img, err, errlen)) return -1;
     if (do_bind(img, img->bind_off, img->bind_size, 0, err, errlen)) return -1;
     if (do_bind(img, img->lazy_off, img->lazy_size, 1, err, errlen)) return -1;
+    /* weak binds only matter for C++ coalescing across images */
+    if (rt_image_count() > 1 && do_bind(img, img->weak_off, img->weak_size, 2, err, errlen)) return -1;
     rt_bind_kind = 0;
-    /* weak binds only matter for C++ coalescing across images; single image -> nothing to do */
     rt_log("dyld-info fixups: %u rebases, %u binds", img->n_rebases, img->n_binds);
     return 0;
 }
@@ -158,7 +183,6 @@ int rt_fixups_chained(struct rt_image *img, char *err, size_t errlen) {
     /* resolve imports up front */
     void **targets = rt_xcalloc(imports_count ? imports_count : 1, sizeof(void *));
     int64_t *addends = rt_xcalloc(imports_count ? imports_count : 1, sizeof(int64_t));
-    char libtmp[128];
     for (uint32_t i = 0; i < imports_count; i++) {
         int64_t ord; int weak; uint32_t name_off; int64_t addend = 0;
         if (imports_fmt == 1 || imports_fmt == 2) {
@@ -172,7 +196,7 @@ int rt_fixups_chained(struct rt_image *img, char *err, size_t errlen) {
             weak = (v >> 16) & 1; name_off = (uint32_t)(v >> 32);
             memcpy(&addend, h + imports_off + (size_t)i * 16 + 8, 8);
         } else { snprintf(err, errlen, "unknown chained import format %u", imports_fmt); return -1; }
-        targets[i] = rt_resolve_symbol(img, symbols + name_off, ordinal_lib(img, ord, libtmp, sizeof libtmp), weak);
+        targets[i] = rt_resolve_bind(img, symbols + name_off, ord, weak);
         addends[i] = addend;
     }
     const uint8_t *starts = h + starts_off;

@@ -341,27 +341,142 @@ id rt_plist_parse(const uint8_t *data, size_t len) {
 }
 
 /* ================================================================== NSBundle */
-struct nsbundle { Class isa; id path; id info; id strings; };
+struct nsbundle { Class isa; id path; id info; id strings; long loaded; };
 static id g_main_bundle;
 void rt_set_bundle_path(const char *p) { free(rt_bundle_path); rt_bundle_path = p ? rt_xstrdup(p) : NULL; }
+/* one NSBundle per directory, like Foundation */
+static struct { char *path; id b; } *g_bundles; static size_t g_nbundles, g_capbundles;
+static pthread_mutex_t g_bundles_lock = PTHREAD_MUTEX_INITIALIZER;
+static id bundle_for_dir(Class c, const char *dir) {
+    char real[4096];
+    if (!realpath(dir, real)) snprintf(real, sizeof real, "%s", dir);
+    pthread_mutex_lock(&g_bundles_lock);
+    for (size_t i = 0; i < g_nbundles; i++) if (!strcmp(g_bundles[i].path, real)) { pthread_mutex_unlock(&g_bundles_lock); return g_bundles[i].b; }
+    id r = rt_alloc_instance(c ? c : RT_CLASS(NSBundle), 0);
+    struct nsbundle *b = (struct nsbundle *)r;
+    b->path = rt_str_new(dir);
+    char ip[4200]; snprintf(ip, sizeof ip, "%s/Info.plist", dir);
+    size_t n; uint8_t *d = read_all(ip, &n);
+    if (d) { b->info = rt_plist_parse(d, n); free(d); }
+    if (!b->info) b->info = rt_dict_new(NULL, NULL, 0);
+    if (g_nbundles == g_capbundles) { g_capbundles = g_capbundles ? g_capbundles * 2 : 16; g_bundles = realloc(g_bundles, g_capbundles * sizeof *g_bundles); }
+    g_bundles[g_nbundles].path = rt_xstrdup(real); g_bundles[g_nbundles++].b = r;   /* bundles live forever */
+    pthread_mutex_unlock(&g_bundles_lock);
+    return r;
+}
 static id b_main(Class c, SEL s) {
     (void)s;
     if (!g_main_bundle) {
-        g_main_bundle = rt_alloc_instance(c, 0);
-        struct nsbundle *b = (struct nsbundle *)g_main_bundle;
         char dir[4096];
         if (rt_bundle_path) snprintf(dir, sizeof dir, "%s", rt_bundle_path);
         else if (rt_main_image) { snprintf(dir, sizeof dir, "%s", rt_main_image->path); char *sl = strrchr(dir, '/'); if (sl) *sl = 0; else strcpy(dir, "."); }
         else strcpy(dir, ".");
-        b->path = rt_str_new(dir);
-        char ip[4200]; snprintf(ip, sizeof ip, "%s/Info.plist", dir);
-        size_t n; uint8_t *d = read_all(ip, &n);
-        if (d) { b->info = rt_plist_parse(d, n); free(d); }
-        if (!b->info) b->info = rt_dict_new(NULL, NULL, 0);
+        g_main_bundle = bundle_for_dir(c, dir);
+        ((struct nsbundle *)g_main_bundle)->loaded = 1;
     }
     return g_main_bundle;
 }
-static id b_forClass(Class c, SEL s, Class k) { (void)k; return b_main(c, s); }
+/* the bundle of the image that defines the class: an app framework's own bundle, else the main bundle */
+static id b_forClass(Class c, SEL s, Class k) {
+    struct rt_image *im = k ? rt_image_for_addr((uint64_t)(uintptr_t)k) : NULL;
+    if (im && im != rt_main_image && im->filetype != 2) {
+        char dir[4096]; snprintf(dir, sizeof dir, "%s", im->path);
+        char *sl = strrchr(dir, '/'); if (sl) *sl = 0;
+        size_t L = strlen(dir);
+        if ((L > 10 && !strcmp(dir + L - 10, ".framework")) || (L > 7 && !strcmp(dir + L - 7, ".bundle"))) {
+            id b = bundle_for_dir(c, dir);
+            ((struct nsbundle *)b)->loaded = 1;
+            return b;
+        }
+    }
+    return b_main(c, s);
+}
+static int is_dir_path(const char *p) { struct stat st; return stat(p, &st) == 0 && S_ISDIR(st.st_mode); }
+static id b_withPath(Class c, SEL s, id path) {
+    (void)s;
+    if (!path) return NULL;
+    const char *p = rt_str_utf8(path);
+    return is_dir_path(p) ? bundle_for_dir(c, p) : NULL;
+}
+static id b_withURL(Class c, SEL s, id url) { return url ? b_withPath(c, s, RT_SEND0(id, url, "path")) : NULL; }
+static id b_initWithPath(id self, SEL s, id path) { id b = b_withPath(self->isa, s, path); objc_release(self); return objc_retain(b); }
+static id b_initWithURL(id self, SEL s, id url) { return b_initWithPath(self, s, url ? RT_SEND0(id, url, "path") : NULL); }
+/* the bundles inside the app: Frameworks/X.framework and PlugIns/X.bundle */
+static void scan_app_bundles(Class c) {
+    id mb = b_main(c, NULL);
+    const char *base = rt_str_utf8(((struct nsbundle *)mb)->path);
+    const char *subs[] = { "Frameworks", "PlugIns", NULL };
+    for (int i = 0; subs[i]; i++) {
+        char dir[4200]; snprintf(dir, sizeof dir, "%s/%s", base, subs[i]);
+        DIR *d = opendir(dir); struct dirent *e;
+        while (d && (e = readdir(d))) {
+            const char *dot = strrchr(e->d_name, '.');
+            if (!dot || (strcmp(dot, ".framework") && strcmp(dot, ".bundle"))) continue;
+            char p[4500]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+            bundle_for_dir(c, p);
+        }
+        if (d) closedir(d);
+    }
+}
+static id b_withIdentifier(Class c, SEL s, id ident) {
+    (void)s;
+    if (!ident) return NULL;
+    scan_app_bundles(c);
+    for (size_t i = 0; i < g_nbundles; i++) {
+        id bi = rt_dict_get(((struct nsbundle *)g_bundles[i].b)->info, rt_str("CFBundleIdentifier"));
+        if (bi && RT_SEND1(long, bi, "isEqualToString:", id, ident) & 0xff) return g_bundles[i].b;
+    }
+    return NULL;
+}
+static id b_allFrameworks(Class c, SEL s) {
+    (void)s; scan_app_bundles(c);
+    id out = RT_SEND0(id, (id)rt_class_named("NSMutableArray"), "array");
+    for (size_t i = 0; i < g_nbundles; i++) {
+        size_t L = strlen(g_bundles[i].path);
+        if (L > 10 && !strcmp(g_bundles[i].path + L - 10, ".framework")) RT_SEND1(void, out, "addObject:", id, g_bundles[i].b);
+    }
+    return out;
+}
+static id b_allBundles(Class c, SEL s) { (void)s; return RT_SEND1(id, (id)rt_class_named("NSArray"), "arrayWithObject:", id, b_main(c, NULL)); }
+/* the bundle's executable: CFBundleExecutable, else the directory name without its extension */
+static int bundle_exe(id self, char *out, size_t n) {
+    struct nsbundle *b = (struct nsbundle *)self;
+    if (self == g_main_bundle) { snprintf(out, n, "%s", rt_main_image ? rt_main_image->path : ""); return rt_main_image != NULL; }
+    const char *dir = rt_str_utf8(b->path);
+    id e = rt_dict_get(b->info, rt_str("CFBundleExecutable"));
+    if (e) snprintf(out, n, "%s/%s", dir, rt_str_utf8(e));
+    else {
+        const char *base = strrchr(dir, '/'); base = base ? base + 1 : dir;
+        snprintf(out, n, "%s/%.*s", dir, (int)strcspn(base, "."), base);
+    }
+    struct stat st; return stat(out, &st) == 0 && S_ISREG(st.st_mode);
+}
+static rt_bool b_load(id self, SEL s) {
+    (void)s; struct nsbundle *b = (struct nsbundle *)self;
+    if (b->loaded) return 1;
+    char exe[4200], err[1024];
+    if (!bundle_exe(self, exe, sizeof exe)) return 0;
+    if (!rt_image_open(exe, err, sizeof err)) { rt_warn("-[NSBundle load] %s: %s", exe, err); return 0; }
+    b->loaded = 1;
+    return 1;
+}
+static rt_bool b_loadAndReturnError(id self, SEL s, id *err) { if (err) *err = NULL; return b_load(self, s); }
+static rt_bool b_isLoaded(id self, SEL s) { (void)s; return ((struct nsbundle *)self)->loaded ? 1 : 0; }
+static Class b_principalClass(id self, SEL s) {
+    if (!b_load(self, s)) return NULL;
+    id pc = rt_dict_get(((struct nsbundle *)self)->info, rt_str("NSPrincipalClass"));
+    if (pc) return rt_class_named(rt_str_utf8(pc));
+    char exe[4200];
+    if (!bundle_exe(self, exe, sizeof exe)) return NULL;
+    for (int i = 0; i < rt_image_count(); i++) {
+        struct rt_image *im = rt_image_at(i);
+        if (strcmp(im->path, exe)) { char r[4096]; if (!realpath(exe, r) || strcmp(im->path, r)) continue; }
+        struct rt_section *cl = rt_image_section(im, NULL, "__objc_classlist");
+        return cl && cl->size ? *(Class *)(uintptr_t)cl->addr : NULL;
+    }
+    return NULL;
+}
+static Class b_classNamed(id self, SEL s, id name) { (void)self; (void)s; return name ? rt_class_named(rt_str_utf8(name)) : NULL; }
 static id b_bundlePath(id self, SEL s) { (void)s; return ((struct nsbundle *)self)->path; }
 static id b_info(id self, SEL s) { (void)s; return ((struct nsbundle *)self)->info; }
 static id b_infoKey(id self, SEL s, id k) { (void)s; return rt_dict_get(((struct nsbundle *)self)->info, k); }
@@ -454,22 +569,31 @@ static id b_URLsOfType(id self, SEL s, id ext, id sub) {
 static id b_bundleURL(id self, SEL s) { return RT_SEND1(id, (id)rt_class_named("NSURL"), "fileURLWithPath:", id, b_bundlePath(self, s)); }
 static id b_localized(id self, SEL s, id key, id value, id table) {
     (void)s; struct nsbundle *b = (struct nsbundle *)self;
-    if (!b->strings) {
+    /* strings tables are cached per table name */
+    if (!b->strings) b->strings = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableDictionary"), "alloc"), "init");
+    const char *t = table && RT_SEND0(unsigned long, table, "length") ? rt_str_utf8(table) : "Localizable";
+    id tkey = rt_str(t);
+    id strings = rt_dict_get(b->strings, tkey);
+    if (!strings) {
         char p[4200]; const char *dir = rt_str_utf8(b->path);
-        const char *t = table ? rt_str_utf8(table) : "Localizable";
-        snprintf(p, sizeof p, "%s/en.lproj/%s.strings", dir, t);
-        size_t n; uint8_t *d = read_all(p, &n);
-        if (!d) { snprintf(p, sizeof p, "%s/Base.lproj/%s.strings", dir, t); d = read_all(p, &n); }
-        b->strings = d ? rt_plist_parse(d, n) : rt_dict_new(NULL, NULL, 0);
+        const char *subs[] = { "en.lproj", "English.lproj", "Base.lproj", ".", NULL };
+        size_t n = 0; uint8_t *d = NULL;
+        for (int i = 0; subs[i] && !d; i++) { snprintf(p, sizeof p, "%s/%s/%s.strings", dir, subs[i], t); d = read_all(p, &n); }
+        strings = d ? rt_plist_parse(d, n) : NULL;
+        if (!strings) strings = rt_dict_new(NULL, NULL, 0);
         free(d);
+        RT_SEND2(void, b->strings, "setObject:forKey:", id, strings, id, tkey);
+        objc_release(strings);
     }
-    id v = key ? rt_dict_get(b->strings, key) : NULL;
+    id v = key ? rt_dict_get(strings, key) : NULL;
     if (v) return v;
     if (value && RT_SEND0(unsigned long, value, "length")) return value;
     return key;
 }
 static id b_resourcePath(id self, SEL s) { return b_bundlePath(self, s); }
-static id b_executablePath(id self, SEL s) { (void)self; (void)s; return rt_str(rt_main_image ? rt_main_image->path : ""); }
+static id b_executablePath(id self, SEL s) { (void)s; char exe[4200]; return bundle_exe(self, exe, sizeof exe) ? rt_str(exe) : NULL; }
+static id b_privateFrameworksPath(id self, SEL s) { return RT_SEND1(id, b_bundlePath(self, s), "stringByAppendingPathComponent:", id, rt_str("Frameworks")); }
+static id b_builtInPlugInsPath(id self, SEL s) { return RT_SEND1(id, b_bundlePath(self, s), "stringByAppendingPathComponent:", id, rt_str("PlugIns")); }
 
 /* ================================================================ NSException */
 struct nsexc { Class isa; id name, reason, userInfo; };
@@ -1066,6 +1190,12 @@ void rt_foundation_misc_init(void) {
     IM(b, "pathsForResourcesOfType:inDirectory:", b_pathsOfType); IM(b, "URLsForResourcesWithExtension:subdirectory:", b_URLsOfType);
     IM(b, "localizations", b_localizations); IM(b, "preferredLocalizations", b_preferredLocalizations);
     IM(b, "developmentLocalization", b_devLocalization);
+    CM(b, "bundleWithPath:", b_withPath); CM(b, "bundleWithURL:", b_withURL); CM(b, "bundleWithIdentifier:", b_withIdentifier);
+    IM(b, "initWithPath:", b_initWithPath); IM(b, "initWithURL:", b_initWithURL);
+    CM(b, "allFrameworks", b_allFrameworks); CM(b, "allBundles", b_allBundles);
+    IM(b, "load", b_load); IM(b, "loadAndReturnError:", b_loadAndReturnError); IM(b, "isLoaded", b_isLoaded);
+    IM(b, "principalClass", b_principalClass); IM(b, "classNamed:", b_classNamed);
+    IM(b, "privateFrameworksPath", b_privateFrameworksPath); IM(b, "builtInPlugInsPath", b_builtInPlugInsPath);
 
     NEWCLASS(NSException, o, sizeof(struct nsexc) - sizeof(void *));
     Class ex = RT_CLASS(NSException);

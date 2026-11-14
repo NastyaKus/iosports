@@ -79,6 +79,21 @@ clang -target arm64-apple-ios12.0 -nostdlibinc -isystem "$root/sdk/include" -c "
 /usr/lib/llvm-18/bin/ld64.lld -arch arm64 -platform_version ios 12.0 12.0 -syslibroot "$root/sdk" -L"$root/sdk/usr/lib" \
     -lSystem -undefined dynamic_lookup "$T/missing.o" -o "$S/neg_missing_api" 2>/dev/null
 python3 -I "$root/tests/make_negative.py" "$S/hello_c" "$T"
+# app with its own framework, a dylib and a plug-in bundle (both fixup formats)
+"$root/tools/make_dylib_app.sh" "$S" 12.0 >"$T/build.log" 2>&1 || { cat "$T/build.log"; exit 1; }
+mkdir -p "$S/chained"
+"$root/tools/make_dylib_app.sh" "$S/chained" 14.0 --chained >"$T/build.log" 2>&1 || { cat "$T/build.log"; exit 1; }
+# the same app with an encrypted framework: must be refused with the framework named
+rm -rf "$S/EncKit.app"; cp -r "$S/DylibDemo.app" "$S/EncKit.app"
+python3 -I - "$S/EncKit.app/Frameworks/DemoKit.framework/DemoKit" <<'PY'
+import struct, sys
+p = sys.argv[1]; d = bytearray(open(p, "rb").read()); off = 32
+for _ in range(struct.unpack_from("<I", d, 16)[0]):
+    cmd, size = struct.unpack_from("<II", d, off)
+    if cmd == 0x2C: struct.pack_into("<I", d, off + 16, 1)
+    off += size
+open(p, "wb").write(d)
+PY
 # .app bundle with Info.plist
 rm -rf "$S/Counter.app"; mkdir -p "$S/Counter.app"; cp "$S/uikit_hello" "$S/Counter.app/Counter"
 cat > "$S/Counter.app/Info.plist" <<PL
@@ -188,12 +203,20 @@ print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h -
     $R "$S/cxx_basics" >"$T/out.txt" 2>&1; rc=$?
     if [ $rc = 0 ] && diff -u "$root/tests/golden/cxx_basics.txt" "$T/out.txt" >"$T/diff.txt"; then ok "cxx_basics (std::__1 ABI, threads, RTTI)"; else ko "cxx_basics rc=$rc" "$T/diff.txt"; fi
   fi
+  # 4c. embedded framework + dylib through @rpath, plug-in bundle via NSBundle/dlopen, weak C++ coalescing
+  $R "$S/DylibDemo.app" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/dylib_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "dylib_demo (dyld-info: framework, @rpath dylib, bundle, dlopen/dlsym/dladdr)"; else ko "dylib_demo rc=$rc" "$T/diff.txt"; fi
+  $R "$S/chained/DylibDemo.app" >"$T/out.txt" 2>&1; rc=$?
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/dylib_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "dylib_demo (chained fixups)"; else ko "dylib_demo.chained rc=$rc" "$T/diff.txt"; fi
+  $R --report "$S/DylibDemo.app" >"$T/out.txt" 2>&1
+  if grep -q "app dylibs loaded: 2" "$T/out.txt" && grep -q "Frameworks/DemoKit.framework/DemoKit" "$T/out.txt" && grep -q "missing: 0" "$T/out.txt"; then ok "--report loads the app's frameworks"; else ko "--report frameworks" "$T/out.txt"; fi
   # 5. negative cases
   check_reject() { # file pattern label
     $R "$1" >"$T/out.txt" 2>&1; rc=$?
     if [ $rc != 0 ] && grep -q "$2" "$T/out.txt"; then ok "rejects $3"; else ko "$3 rc=$rc" "$T/out.txt"; fi
   }
   check_reject "$T/encrypted" "FairPlay-encrypted" "FairPlay-encrypted binary"
+  check_reject "$S/EncKit.app" "DemoKit.framework/DemoKit is FairPlay-encrypted" "app with a FairPlay-encrypted framework"
   check_reject "$T/x86_64" "need arm64" "x86_64 binary"
   check_reject "$T/armv7_only" "no arm64 slice" "armv7-only fat binary"
   check_reject "$T/garbage" "not a Mach-O" "non-Mach-O file"

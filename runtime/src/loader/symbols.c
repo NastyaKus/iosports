@@ -201,8 +201,9 @@ void *rt_dlsym_name(const char *cname) {
     snprintf(buf, sizeof buf, "_%s", cname);
     const struct iosrt_export *e = rt_export_find(buf);
     if (e) return e->addr;
-    if (rt_main_image) {
-        void *a = self_symbol(rt_main_image, buf);
+    for (int i = 0; i < rt_image_count(); i++) {   /* the executable first, then the app's dylibs */
+        void *a = rt_image_export(rt_image_at(i), buf);
+        if (!a) a = self_symbol(rt_image_at(i), buf);
         if (a) return a;
     }
     return NULL;

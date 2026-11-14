@@ -81,15 +81,17 @@ static id lookup(const char *dir, const char *name) {
     }
     return NULL;
 }
-static id g_cache;   /* name -> UIImage */
-static id im_named(Class c, SEL s, id name) {
-    (void)c; (void)s;
+static id g_cache;   /* name (or "bundle-path|name") -> UIImage */
+static id named_in_bundle(id bundle, id name) {
     if (!name || !RT_SEND0(unsigned long, name, "length")) return NULL;
     if (!g_cache) g_cache = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableDictionary"), "alloc"), "init");
-    id hit = rt_dict_get(g_cache, name);
-    if (hit) return hit;
-    id bundle = RT_SEND0(id, (id)RT_CLASS(NSBundle), "mainBundle");
+    id main = RT_SEND0(id, (id)RT_CLASS(NSBundle), "mainBundle");
+    if (!bundle) bundle = main;
     const char *dir = rt_str_utf8(RT_SEND0(id, bundle, "bundlePath"));
+    id key = name;
+    if (bundle != main) { char k[4200]; snprintf(k, sizeof k, "%s|%s", dir, rt_str_utf8(name)); key = rt_str(k); }
+    id hit = rt_dict_get(g_cache, key);
+    if (hit) return hit;
     id img = lookup(dir, rt_str_utf8(name));
     if (!img) {
         /* localized resources */
@@ -97,14 +99,19 @@ static id im_named(Class c, SEL s, id name) {
         if (!img) { snprintf(d2, sizeof d2, "%s/en.lproj", dir); img = lookup(d2, rt_str_utf8(name)); }
     }
     if (!img) {
-        if (rt_first_time(rt_str_utf8(name))) rt_log("UIImage imageNamed: '%s' not found (asset catalogs are not supported)", rt_str_utf8(name));
+        id rt_asset_image(id bundle, id name);   /* compiled asset catalog (Assets.car) */
+        img = rt_asset_image(bundle, name);
+    }
+    if (!img) {
+        if (rt_first_time(rt_str_utf8(name))) rt_log("UIImage imageNamed: '%s' not found", rt_str_utf8(name));
         return NULL;
     }
     ((struct uiimage *)img)->name = objc_retain(name);
-    RT_SEND2(void, g_cache, "setObject:forKey:", id, img, id, name);
+    RT_SEND2(void, g_cache, "setObject:forKey:", id, img, id, key);
     return img;
 }
-static id im_namedBundle(Class c, SEL s, id name, id bundle, id traits) { (void)bundle; (void)traits; return im_named(c, s, name); }
+static id im_named(Class c, SEL s, id name) { (void)c; (void)s; return named_in_bundle(NULL, name); }
+static id im_namedBundle(Class c, SEL s, id name, id bundle, id traits) { (void)c; (void)s; (void)traits; return named_in_bundle(bundle, name); }
 static id im_withContentsOfFile(Class c, SEL s, id path) {
     (void)c; (void)s;
     if (!path) return NULL;

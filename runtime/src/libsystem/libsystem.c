@@ -466,10 +466,40 @@ void rt_set_args(int argc, char **argv, char **envp) { g_argc = argc; g_argv = a
 
 /* dlopen/dlsym for guests resolve against the HLE export table */
 void *rt_dlsym_name(const char *cname);
-void *iosrt_dlopen(const char *path, int mode) { (void)mode; (void)path; return (void *)(uintptr_t)0x1; }
-void *iosrt_dlsym(void *h, const char *name) { (void)h; return rt_dlsym_name(name); }
+/* dlopen: the app's own dylibs/bundles are loaded as guest images (the handle is the
+ * rt_image); system libraries are iosrt itself (handle 1, RTLD_DEFAULT-like lookups) */
+static __thread char dl_err[1100]; static __thread int dl_err_set;
+#define DARWIN_RTLD_DEFAULT ((void *)(intptr_t)-2)
+#define DARWIN_RTLD_SELF    ((void *)(intptr_t)-3)
+#define DARWIN_RTLD_MAIN    ((void *)(intptr_t)-5)
+int rt_image_find_file(const char *name, char *out, size_t n);
+void *iosrt_dlopen(const char *path, int mode) {
+    (void)mode;
+    if (!path) return (void *)(uintptr_t)0x1;
+    char real[4096];
+    if (!rt_image_find_file(path, real, sizeof real)) return (void *)(uintptr_t)0x1;   /* system library */
+    char err[1024];
+    struct rt_image *im = rt_image_open(real, err, sizeof err);
+    if (!im) { snprintf(dl_err, sizeof dl_err, "dlopen(%s): %s", path, err); dl_err_set = 1; rt_warn("%s", dl_err); return NULL; }
+    return im;
+}
+void *iosrt_dlsym(void *h, const char *name) {
+    char buf[512];
+    snprintf(buf, sizeof buf, "_%s", name);
+    if (h && h != (void *)(uintptr_t)1 && h != DARWIN_RTLD_DEFAULT && h != DARWIN_RTLD_SELF && h != DARWIN_RTLD_MAIN) {
+        for (int i = 0; i < rt_image_count(); i++)
+            if (rt_image_at(i) == h) {
+                void *a = rt_image_export(h, buf);
+                if (a) return a;
+                break;
+            }
+    }
+    void *a = rt_dlsym_name(name);
+    if (!a) { snprintf(dl_err, sizeof dl_err, "dlsym(%s): symbol not found", name); dl_err_set = 1; }
+    return a;
+}
 int iosrt_dlclose(void *h) { (void)h; return 0; }
-const char *iosrt_dlerror(void) { return "symbol not provided by iosrt"; }
+const char *iosrt_dlerror(void) { if (!dl_err_set) return NULL; dl_err_set = 0; return dl_err; }
 
 /* libm Darwin extras */
 double iosrt_exp10(double x) { return pow(10.0, x); }

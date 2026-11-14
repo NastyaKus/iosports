@@ -215,33 +215,67 @@ static char *resolve_executable(const char *path, char **bundle) {
 }
 
 /* --------------------------------------------------------- guest thread */
+static int g_argc; static char **g_argv; static char *g_apple[3]; static char g_apple_ep[4200];
+/* +load methods, then the image's static initialisers (dyld order: per image, dependencies first) */
+static void initialize_image(struct rt_image *img) {
+    if (img->state >= RT_IMG_INITIALIZED) return;
+    img->state = RT_IMG_INITIALIZED;
+    rt_objc_load_image(img);
+    for (int i = 0; i < img->nsects; i++) {
+        struct rt_section *s = &img->sects[i];
+        uint8_t type = s->flags & 0xff;
+        if (type == 0x9) {               /* S_MOD_INIT_FUNC_POINTERS */
+            void (**fns)(int, char **, char **, char **) = (void *)(uintptr_t)s->addr;
+            for (uint64_t k = 0; k < s->size / 8; k++) fns[k](g_argc, g_argv, environ, g_apple);
+        } else if (type == 0x16) {       /* S_INIT_FUNC_OFFSETS */
+            const uint32_t *offs = (const uint32_t *)(uintptr_t)s->addr;
+            for (uint64_t k = 0; k < s->size / 4; k++)
+                ((void (*)(int, char **, char **, char **))(uintptr_t)(img->header_addr + offs[k]))(g_argc, g_argv, environ, g_apple);
+        }
+    }
+}
+/* memory protections and Objective-C metadata of every image that is fixed up but not ready */
+static void prepare_images(void) {
+    for (int i = 0; i < rt_image_init_count(); i++) {
+        struct rt_image *im = rt_image_init_at(i);
+        if (im->state != RT_IMG_FIXED) continue;
+        rt_image_protect(im);
+        rt_objc_map_image(im);
+        im->state = RT_IMG_READY;
+    }
+}
+static void initialize_images(void) {
+    for (int i = 0; i < rt_image_init_count(); i++) initialize_image(rt_image_init_at(i));
+}
+/* dlopen / -[NSBundle load]: load, prepare and initialise a dylib or bundle and its dependencies */
+struct rt_image *rt_image_load_path(const char *path, char *err, size_t errlen);
+static pthread_mutex_t open_lock = PTHREAD_MUTEX_INITIALIZER;
+struct rt_image *rt_image_open(const char *path, char *err, size_t errlen) {
+    pthread_mutex_lock(&open_lock);
+    struct rt_image *img = rt_image_load_path(path, err, errlen);
+    if (img) {
+        rt_traps_seal();
+        prepare_images();
+        initialize_images();
+    }
+    pthread_mutex_unlock(&open_lock);
+    return img;
+}
+
 struct guest_args { struct rt_image *img; int argc; char **argv; };
 static void *guest_thread(void *p) {
     struct guest_args *g = p;
     guest_main = pthread_self(); guest_main_valid = 1;
-    char *apple[3]; char ep[4200];
-    snprintf(ep, sizeof ep, "executable_path=%s", g->img->path);
-    apple[0] = ep; apple[1] = NULL;
+    g_argc = g->argc; g_argv = g->argv;
+    snprintf(g_apple_ep, sizeof g_apple_ep, "executable_path=%s", g->img->path);
+    g_apple[0] = g_apple_ep; g_apple[1] = NULL;
     if (sigsetjmp(guest_jmp, 0) == 0) {
         void *pool = objc_autoreleasePoolPush();
-        rt_objc_load_image(g->img);
-        /* static initialisers */
-        for (int i = 0; i < g->img->nsects; i++) {
-            struct rt_section *s = &g->img->sects[i];
-            uint8_t type = s->flags & 0xff;
-            if (type == 0x9) {               /* S_MOD_INIT_FUNC_POINTERS */
-                void (**fns)(int, char **, char **, char **) = (void *)(uintptr_t)s->addr;
-                for (uint64_t k = 0; k < s->size / 8; k++) fns[k](g->argc, g->argv, environ, apple);
-            } else if (type == 0x16) {       /* S_INIT_FUNC_OFFSETS */
-                const uint32_t *offs = (const uint32_t *)(uintptr_t)s->addr;
-                for (uint64_t k = 0; k < s->size / 4; k++)
-                    ((void (*)(int, char **, char **, char **))(uintptr_t)(g->img->header_addr + offs[k]))(g->argc, g->argv, environ, apple);
-            }
-        }
+        initialize_images();
         objc_autoreleasePoolPop(pool);
         int (*main_fn)(int, char **, char **, char **) = (void *)(uintptr_t)(g->img->header_addr + g->img->entryoff);
         rt_log("calling main at %p", (void *)main_fn);
-        int rc = main_fn(g->argc, g->argv, environ, apple);
+        int rc = main_fn(g->argc, g->argv, environ, g_apple);
         rt_run_atexit();
         guest_code = rc;
     }
@@ -249,10 +283,12 @@ static void *guest_thread(void *p) {
     return NULL;
 }
 
+void rt_images_reset(void);
 static int load_main_image(const char *path, int dry, char *err, size_t errlen, struct rt_image **out) {
     char *bundle;
     char *exe = resolve_executable(path, &bundle);
     if (bundle) rt_set_bundle_path(bundle);
+    rt_images_reset();
     struct rt_image *img = rt_xcalloc(1, sizeof *img);
     struct rt_load_opts o = { dry, 0 };
     int rc = rt_image_load(img, exe, &o, err, errlen);
@@ -271,14 +307,16 @@ int iosrt_run(const char *path, const struct rt_run_opts *o) {
         return 66;
     }
     rt_traps_seal();
-    rt_image_protect(img);
     rt_main_image = img;
-    if (img->nmissing) {
-        unsigned fn = 0;
-        for (int i = 0; i < img->nmissing; i++) fn += img->missing[i].kind == 0;
-        rt_log("%d imported symbols are not implemented (%u functions bound to traps)", img->nmissing, fn);
+    int nmissing = 0; unsigned fn = 0;
+    for (int k = 0; k < rt_image_count(); k++) {
+        struct rt_image *im = rt_image_at(k);
+        nmissing += im->nmissing;
+        for (int i = 0; i < im->nmissing; i++) fn += im->missing[i].kind == 0;
     }
-    rt_objc_map_image(img);
+    if (rt_image_count() > 1) rt_log("%d images (the executable and %d dylibs)", rt_image_count(), rt_image_count() - 1);
+    if (nmissing) rt_log("%d imported symbols are not implemented (%u functions bound to traps)", nmissing, fn);
+    prepare_images();
     install_crash_handler();
     int argc = o && o->argc ? o->argc : 1;
     char *defargv[2] = { img->path, NULL };
@@ -325,7 +363,7 @@ static void report_bundle(rt_sb *sb, const char *path, struct rt_image *img) {
         snprintf(dir, sizeof dir, "%s/Frameworks", path);
         if (dir_has(dir, "libswift", ".dylib", NULL, 0)) BLOCK("written in Swift (Frameworks/libswift*.dylib): the Swift runtime is not supported yet");
         int fw = dir_has(dir, NULL, ".framework", first, sizeof first) + dir_has(dir, NULL, ".dylib", NULL, 0) - dir_has(dir, "libswift", ".dylib", NULL, 0);
-        if (fw > 0) BLOCK("embeds %d framework(s)/dylib(s) (e.g. %s): dynamic libraries are not loaded yet", fw, first[0] ? first : "a dylib");
+        if (fw > rt_image_count() - 1) LIMIT("embeds %d framework(s)/dylib(s), %d of them are linked and loaded", fw, rt_image_count() - 1);
         snprintf(dir, sizeof dir, "%s/PlugIns", path);
         if (dir_has(dir, NULL, ".appex", NULL, 0)) LIMIT("app extensions (widgets etc.) are ignored");
     }
@@ -357,32 +395,58 @@ char *iosrt_report(const char *path) {
     rt_sb_printf(&sb, "iosrt compatibility report\nfile: %s\n", path);
     if (load_main_image(path, 1, err, sizeof err, &img)) {
         rt_sb_printf(&sb, "status: NOT LOADABLE\nreason: %s\n", err);
+        rt_images_reset();
         return rt_sb_take(&sb);
     }
-    unsigned total = img->n_resolved;
-    for (int i = 0; i < img->nmissing; i++) total++;
-    struct rt_section *cl = rt_image_section(img, NULL, "__objc_classlist");
-    struct rt_section *ca = rt_image_section(img, NULL, "__objc_catlist");
+    /* all images together: the executable and the app's own dylibs */
+    struct rt_image all; memset(&all, 0, sizeof all);
+    unsigned long long ncls = 0, ncat = 0;
+    for (int k = 0; k < rt_image_count(); k++) {
+        struct rt_image *im = rt_image_at(k);
+        all.n_resolved += im->n_resolved; all.n_rebases += im->n_rebases; all.n_binds += im->n_binds;
+        struct rt_section *cl = rt_image_section(im, NULL, "__objc_classlist"), *ca = rt_image_section(im, NULL, "__objc_catlist");
+        ncls += cl ? cl->size / 8 : 0; ncat += ca ? ca->size / 8 : 0;
+        for (int i = 0; i < im->nmissing; i++) {
+            int j = 0;
+            while (j < all.nmissing && strcmp(all.missing[j].name, im->missing[i].name)) j++;
+            if (j < all.nmissing) { all.missing[j].count += im->missing[i].count; continue; }
+            if (all.nmissing == all.capmissing) {
+                all.capmissing = all.capmissing ? all.capmissing * 2 : 64;
+                all.missing = realloc(all.missing, sizeof *all.missing * (size_t)all.capmissing);
+            }
+            all.missing[all.nmissing++] = im->missing[i];
+        }
+    }
+    unsigned total = all.n_resolved + (unsigned)all.nmissing;
     rt_sb_printf(&sb, "status: loadable (arm64, %s fixups)\n", img->has_chained ? "chained" : "dyld-info");
     rt_sb_printf(&sb, "segments: %d, sections: %d, linked libraries: %d\n", img->nsegs, img->nsects, img->ndylibs);
-    rt_sb_printf(&sb, "rebases: %u, binds: %u\n", img->n_rebases, img->n_binds);
-    rt_sb_printf(&sb, "objc classes: %llu, categories: %llu\n",
-                 (unsigned long long)(cl ? cl->size / 8 : 0), (unsigned long long)(ca ? ca->size / 8 : 0));
-    rt_sb_printf(&sb, "imported symbols: %u, provided by iosrt: %u (%.1f%%), missing: %d\n", total, img->n_resolved,
-                 total ? 100.0 * img->n_resolved / total : 100.0, img->nmissing);
-    qsort(img->missing, (size_t)img->nmissing, sizeof *img->missing, cmp_missing);
+    if (rt_image_count() > 1) {
+        rt_sb_printf(&sb, "app dylibs loaded: %d\n", rt_image_count() - 1);
+        for (int k = 1; k < rt_image_count(); k++) {
+            struct rt_image *im = rt_image_at(k);
+            const char *f = strstr(im->path, "/Frameworks/");
+            rt_sb_printf(&sb, "  %s (%d missing)\n", f ? f + 1 : im->path, im->nmissing);
+        }
+    }
+    rt_sb_printf(&sb, "rebases: %u, binds: %u\n", all.n_rebases, all.n_binds);
+    rt_sb_printf(&sb, "objc classes: %llu, categories: %llu\n", ncls, ncat);
+    rt_sb_printf(&sb, "imported symbols: %u, provided by iosrt: %u (%.1f%%), missing: %d\n", total, all.n_resolved,
+                 total ? 100.0 * all.n_resolved / total : 100.0, all.nmissing);
+    qsort(all.missing, (size_t)all.nmissing, sizeof *all.missing, cmp_missing);
     /* per-library summary */
     rt_sb_puts(&sb, "missing by library:\n");
-    for (int i = 0; i < img->nmissing;) {
-        int j = i; while (j < img->nmissing && !strcmp(img->missing[j].lib, img->missing[i].lib)) j++;
-        rt_sb_printf(&sb, "  %-22s %d\n", img->missing[i].lib, j - i);
+    for (int i = 0; i < all.nmissing;) {
+        int j = i; while (j < all.nmissing && !strcmp(all.missing[j].lib, all.missing[i].lib)) j++;
+        rt_sb_printf(&sb, "  %-22s %d\n", all.missing[i].lib, j - i);
         i = j;
     }
-    report_bundle(&sb, path, img);
+    report_bundle(&sb, path, &all);
     rt_sb_puts(&sb, "missing symbols:\n");
     static const char *kinds[] = { "func", "data", "class" };
-    for (int i = 0; i < img->nmissing; i++)
-        rt_sb_printf(&sb, "  [%s] %s %s\n", img->missing[i].lib, kinds[img->missing[i].kind], img->missing[i].name);
-    if (img->map) munmap(img->map, img->map_size);
+    for (int i = 0; i < all.nmissing; i++)
+        rt_sb_printf(&sb, "  [%s] %s %s\n", all.missing[i].lib, kinds[all.missing[i].kind], all.missing[i].name);
+    free(all.missing);
+    for (int k = 0; k < rt_image_count(); k++) { struct rt_image *im = rt_image_at(k); if (im->map) munmap(im->map, im->map_size); }
+    rt_images_reset();
     return rt_sb_take(&sb);
 }

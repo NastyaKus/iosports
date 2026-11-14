@@ -111,30 +111,48 @@ size_t iosrt_pthread_get_stacksize_np(pthread_t t) {
 }
 
 /* ----------------------------------------------------- dyld introspection */
-uint32_t iosrt_dyld_image_count(void) { return rt_main_image ? 1 : 0; }
-const void *iosrt_dyld_get_image_header(uint32_t i) { return i == 0 && rt_main_image ? (const void *)(uintptr_t)rt_main_image->header_addr : NULL; }
-intptr_t iosrt_dyld_get_image_vmaddr_slide(uint32_t i) { return i == 0 && rt_main_image ? rt_main_image->slide : 0; }
-const char *iosrt_dyld_get_image_name(uint32_t i) { return i == 0 && rt_main_image ? rt_main_image->path : NULL; }
+uint32_t iosrt_dyld_image_count(void) { return (uint32_t)rt_image_count(); }
+const void *iosrt_dyld_get_image_header(uint32_t i) { struct rt_image *im = rt_image_at((int)i); return im ? (const void *)(uintptr_t)im->header_addr : NULL; }
+intptr_t iosrt_dyld_get_image_vmaddr_slide(uint32_t i) { struct rt_image *im = rt_image_at((int)i); return im ? im->slide : 0; }
+const char *iosrt_dyld_get_image_name(uint32_t i) { struct rt_image *im = rt_image_at((int)i); return im ? im->path : NULL; }
 void iosrt_dyld_register_func_for_add_image(void (*fn)(const void *, intptr_t)) {
-    if (fn && rt_main_image) fn((const void *)(uintptr_t)rt_main_image->header_addr, rt_main_image->slide);
+    /* called now for every image; images loaded later by dlopen are not reported yet */
+    for (int i = 0; fn && i < rt_image_count(); i++) fn((const void *)(uintptr_t)rt_image_at(i)->header_addr, rt_image_at(i)->slide);
 }
 void iosrt_dyld_register_func_for_remove_image(void (*fn)(const void *, intptr_t)) { (void)fn; }
 struct darwin_dl_info { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; };
 int iosrt_dladdr(const void *addr, struct darwin_dl_info *info) {
     uint64_t off = 0;
-    const char *s = rt_image_symbolize((uint64_t)(uintptr_t)addr, &off);
-    if (!s || !rt_main_image) { memset(info, 0, sizeof *info); return 0; }
-    info->dli_fname = rt_main_image->path; info->dli_fbase = (void *)(uintptr_t)rt_main_image->header_addr;
-    info->dli_sname = s; info->dli_saddr = (void *)((uintptr_t)addr - off);
+    struct rt_image *im = rt_image_for_addr((uint64_t)(uintptr_t)addr);
+    const char *s = im ? rt_image_symbolize((uint64_t)(uintptr_t)addr, &off) : NULL;
+    if (!im) { memset(info, 0, sizeof *info); return 0; }
+    info->dli_fname = im->path; info->dli_fbase = (void *)(uintptr_t)im->header_addr;
+    info->dli_sname = s && strcmp(s, "<image>") ? (s[0] == '_' ? s + 1 : s) : NULL;   /* C names, as Darwin reports them */
+    info->dli_saddr = info->dli_sname ? (void *)((uintptr_t)addr - off) : NULL;
     return 1;
 }
-/* getsectdatafromheader_64(header, seg, sect, &size) */
+static struct rt_image *image_of_header(const void *mh) {
+    struct rt_image *im = mh ? rt_image_for_header(mh) : NULL;
+    return im ? im : rt_main_image;
+}
+/* getsectdatafromheader_64(header, seg, sect, &size): unslid address, as on Darwin */
 void *iosrt_getsectdatafromheader_64(const void *mh, const char *seg, const char *sect, unsigned long *size) {
-    (void)mh;
-    if (!rt_main_image) { if (size) *size = 0; return NULL; }
-    struct rt_section *s = rt_image_section(rt_main_image, seg, sect);
+    struct rt_image *im = image_of_header(mh);
+    struct rt_section *s = im ? rt_image_section(im, seg, sect) : NULL;
     if (size) *size = s ? s->size : 0;
-    return s ? (void *)(uintptr_t)(s->addr - (uint64_t)rt_main_image->slide) : NULL;   /* unslid, as on Darwin */
+    return s ? (void *)(uintptr_t)(s->addr - (uint64_t)im->slide) : NULL;
+}
+/* getsectiondata(header, seg, sect, &size): slid address */
+void *iosrt_getsectiondata(const void *mh, const char *seg, const char *sect, unsigned long *size) {
+    struct rt_image *im = image_of_header(mh);
+    struct rt_section *s = im ? rt_image_section(im, seg, sect) : NULL;
+    if (size) *size = s ? s->size : 0;
+    return s ? (void *)(uintptr_t)s->addr : NULL;
+}
+void *iosrt_getsectdata(const char *seg, const char *sect, unsigned long *size) { return iosrt_getsectdatafromheader_64(NULL, seg, sect, size); }
+const void *iosrt_dyld_get_image_header_containing_address(const void *addr) {
+    struct rt_image *im = rt_image_for_addr((uint64_t)(uintptr_t)addr);
+    return im ? (const void *)(uintptr_t)im->header_addr : NULL;
 }
 const char *iosrt_getprogname(void) {
     const char *p = rt_main_image ? strrchr(rt_main_image->path, '/') : NULL;

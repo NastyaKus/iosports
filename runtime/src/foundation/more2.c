@@ -698,7 +698,6 @@ static id set_initWithArray(id self, SEL s, id arr) {
 static id set_byAdding(id self, SEL s, id o) { (void)s; id m = RT_SEND0(id, self, "mutableCopy"); if (o) RT_SEND1(void, m, "addObject:", id, o); id r = RT_SEND0(id, m, "copy"); objc_release(m); return objc_autorelease(r); }
 static id set_byAddingArray(id self, SEL s, id a) { (void)s; id m = RT_SEND0(id, self, "mutableCopy"); for (size_t i = 0; i < rt_array_count(a); i++) RT_SEND1(void, m, "addObject:", id, rt_array_at(a, i)); id r = RT_SEND0(id, m, "copy"); objc_release(m); return objc_autorelease(r); }
 static void tz_reset(Class c, SEL s) { (void)c; (void)s; }
-static id bundle_withPath(Class c, SEL s, id path) { (void)path; return RT_SEND0(id, (id)c, "mainBundle"); (void)s; }
 static id set_withSet(Class c, SEL s, id other) { return objc_autorelease(set_initWithArray(rt_alloc_instance(c, 0), s, RT_SEND0(id, other, "allObjects"))); }
 static rt_bool data_writeOpts(id self, SEL s, id path, unsigned long opts, id *err) { (void)opts; if (err) *err = NULL; return RT_SEND2(long, self, "writeToFile:atomically:", id, path, long, 1) & 0xff ? 1 : 0; (void)s; }
 static rt_bool data_writeURL(id self, SEL s, id url, long atomic) { (void)atomic; return data_writeOpts(self, s, RT_SEND0(id, url, "path"), 0, NULL); }
@@ -1042,7 +1041,6 @@ void rt_foundation_more2_init(void) {
     CM(RT_CLASS(NSSet), "setWithSet:", set_withSet);
     IM(RT_CLASS(NSSet), "setByAddingObject:", set_byAdding); IM(RT_CLASS(NSSet), "setByAddingObjectsFromArray:", set_byAddingArray);
     CM(RT_CLASS(NSTimeZone), "resetSystemTimeZone", tz_reset);
-    CM(rt_class_named("NSBundle"), "bundleWithPath:", bundle_withPath); CM(rt_class_named("NSBundle"), "bundleWithIdentifier:", bundle_withPath);
     IM(RT_CLASS(NSData), "writeToFile:options:error:", data_writeOpts); IM(RT_CLASS(NSData), "writeToURL:atomically:", data_writeURL);
     CM(RT_CLASS(NSData), "dataWithContentsOfURL:", data_withContentsOfURL); CM(RT_CLASS(NSData), "dataWithContentsOfFile:options:error:", data_withContentsOfFileOpts);
     IM(RT_CLASS(NSData), "base64EncodedStringWithOptions:", data_base64);

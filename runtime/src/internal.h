@@ -131,7 +131,19 @@ struct rt_image {
     unsigned n_rebases, n_binds, n_resolved;
     struct rt_missing *missing; int nmissing, capmissing;
     int dry_run;
+    /* dylibs (MH_DYLIB / MH_BUNDLE) and two-level namespace */
+    uint32_t filetype;                     /* 2 executable, 6 dylib, 8 bundle */
+    char *install_name;                    /* LC_ID_DYLIB */
+    uint8_t dylib_flags[RT_MAX_DYLIBS];    /* RT_DYLIB_* per LC_*_DYLIB ordinal */
+    struct rt_image *deps[RT_MAX_DYLIBS];  /* guest image per ordinal, NULL = provided by iosrt */
+    char *rpaths[16]; int nrpaths;
+    uint32_t export_off, export_size;      /* export trie (dyld info or LC_DYLD_EXPORTS_TRIE) */
+    int state;                             /* RT_IMG_* */
 };
+#define RT_DYLIB_WEAK     1
+#define RT_DYLIB_REEXPORT 2
+#define RT_DYLIB_UPWARD   4
+enum { RT_IMG_MAPPED = 0, RT_IMG_FIXED, RT_IMG_READY, RT_IMG_INITIALIZED };
 
 struct rt_load_opts { int dry_run; int verbose; };
 int  rt_image_load(struct rt_image *img, const char *path, const struct rt_load_opts *o, char *err, size_t errlen);
@@ -143,9 +155,23 @@ struct rt_section *rt_image_section(struct rt_image *img, const char *seg, const
 int  rt_image_contains(uint64_t addr);
 const char *rt_image_symbolize(uint64_t addr, uint64_t *off);
 extern struct rt_image *rt_main_image;
+/* all guest images: index 0 is the main executable, then dylibs in the order they were mapped */
+int  rt_image_count(void);
+struct rt_image *rt_image_at(int i);
+/* initialisation order: dependencies before the images that link them, the main executable last */
+int  rt_image_init_count(void);
+struct rt_image *rt_image_init_at(int i);
+struct rt_image *rt_image_for_addr(uint64_t addr);
+struct rt_image *rt_image_for_header(const void *mh);
+/* load a dylib/bundle at run time (dlopen, -[NSBundle load]); NULL + err on failure */
+struct rt_image *rt_image_open(const char *path, char *err, size_t errlen);
+/* exported symbol of an image (export trie or symbol table, re-exports followed) */
+void *rt_image_export(struct rt_image *img, const char *name);
 
 /* symbol resolution (with traps for missing symbols) */
 void *rt_resolve_symbol(struct rt_image *img, const char *name, const char *lib, int weak_import);
+/* resolution of a bind by library ordinal: guest dylib exports first, then iosrt */
+void *rt_resolve_bind(struct rt_image *img, const char *name, int64_t ordinal, int weak_import);
 
 /* --------------------------------------------------------------- launch */
 struct rt_run_opts { int argc; char **argv; int dry_run; int verbose; };

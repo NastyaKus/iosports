@@ -3,7 +3,7 @@
 Legend: ✅ works and is covered by automated tests · 🟡 built / implemented but
 not verified on a real Android device · ❌ not implemented
 
-## Verified (tests/run_tests.sh — 63/63 passing)
+## Verified (tests/run_tests.sh — 71/71 passing)
 
 Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 **android-arm64 (bionic, static)** build of the runtime, executed under
@@ -16,6 +16,7 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | Segment mapping with ASLR slide, protections, I-cache flush | ✅ | all samples |
 | `LC_DYLD_INFO` rebase / bind / lazy-bind | ✅ | iOS 10 builds; also 83,738 rebases + 8,957 binds of a real App Store binary (dry-run) |
 | `LC_DYLD_CHAINED_FIXUPS` (iOS 14+) | ✅ | iOS 14 builds produce byte-identical output |
+| Embedded frameworks and dylibs (`MH_DYLIB`, `MH_BUNDLE`): `@rpath`/`@executable_path`/`@loader_path` with `LC_RPATH`, recursive dependencies, two-level namespace binds by library ordinal through export tries (re-exports followed), weak C++ definitions coalesced across images, per-image ObjC metadata, `+load` and initialisers in dependency order; `dlopen`/`dlsym`/`dladdr`/`_dyld_*`, `NSBundle` per directory (`bundleForClass:`, `bundleWithIdentifier:`, `load`, `principalClass`); encrypted frameworks refused by name | ✅ | `dylib_demo` (both fixup formats), report and negative tests |
 | Missing-API trap stubs with symbol names | ✅ | `neg_missing_api` exits 70 naming `_CFNetworkCopySystemProxySettings` |
 | Darwin variadic calling convention (printf/NSLog/…) | ✅ | `hello_c`, `objc_basics` goldens |
 | Callbacks host → guest (qsort, blocks, timers, render callbacks) | ✅ | samples |
@@ -76,7 +77,7 @@ Every check runs twice: against the **linux-aarch64 (glibc)** build and the
 | ❌ Networking (`NSURLSession`/`NSURLConnection` fail like an offline device), sockets | online features |
 | ❌ Remote web pages, `WKWebView`, CSS transforms/animations, text input in pages | web-based screens |
 | ❌ Auto Layout (NIB/storyboard frames are used as laid out; constraints are ignored) | modern app UIs on other screen sizes |
-| ❌ dylibs / embedded frameworks (`MH_DYLIB`), Swift runtime | modern apps |
+| ❌ Swift runtime | modern apps (embedded `libswift*.dylib` are not run yet) |
 | ❌ GLKit (next) | GLKit-based games |
 | ❌ Core Data, sqlite3, NSPredicate evaluation (later phase) | data-driven apps |
 | ❌ 32-bit (armv7) apps | would need CPU emulation (touchHLE's domain) |

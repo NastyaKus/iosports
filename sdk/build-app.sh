@@ -1,11 +1,18 @@
 #!/bin/sh
 # Build an iOS arm64 Mach-O against the iosrt mini-SDK (no Apple SDK needed).
-# usage: sdk/build-app.sh <out> <min-ios> [--chained] <sources...> [-framework X ...]
+# usage: sdk/build-app.sh <out> <min-ios> [--chained] [--dylib <install-name> | --bundle]
+#                         <sources...> [-framework X ...] [-rpath <path>] [<lib.dylib or framework binary> ...]
 set -eu
 sdk=$(cd "$(dirname "$0")" && pwd)
 out=$1; ver=$2; shift 2
 chained=""
 if [ "${1:-}" = "--chained" ]; then chained="-fixup_chains"; shift; fi
+kind=""
+case ${1:-} in
+  --dylib) kind="-dylib -install_name $2"; shift 2 ;;
+  --bundle) kind="-bundle"; shift ;;
+esac
+libs=""
 LD=${LD64:-/usr/lib/llvm-18/bin/ld64.lld}
 tmp=$(mktemp -d)
 objs=""; fw=""; cxx=""
@@ -14,6 +21,7 @@ CXXINC="-nostdinc++ -isystem $sdk/../runtime/src/cxx/include -isystem $NDK/toolc
 while [ $# -gt 0 ]; do
   case $1 in
     -framework) fw="$fw -framework $2"; shift 2 ;;
+    -rpath) libs="$libs -rpath $2"; shift 2 ;;
     *.c|*.m)
       o="$tmp/$(basename "$1").o"
       clang -target arm64-apple-ios$ver -nostdlibinc -isystem "$sdk/include" \
@@ -24,9 +32,9 @@ while [ $# -gt 0 ]; do
       clang++ -target arm64-apple-ios$ver -std=c++17 $CXXINC -nostdlibinc -isystem "$sdk/include" \
             -fobjc-arc -fblocks -fobjc-runtime=ios-$ver -fno-exceptions -O1 -g0 -Wall -c "$1" -o "$o"
       objs="$objs $o"; cxx="-lc++"; shift ;;
-    *) echo "unknown arg $1" >&2; exit 2 ;;
+    *) if [ -f "$1" ]; then libs="$libs $1"; shift; else echo "unknown arg $1" >&2; exit 2; fi ;;
   esac
 done
-$LD -arch arm64 -platform_version ios $ver $ver -syslibroot "$sdk" -F"$sdk/System/Library/Frameworks" \
-    -L"$sdk/usr/lib" -lSystem -lobjc $cxx -framework CoreFoundation $fw $chained $objs -o "$out"
+$LD -arch arm64 $kind -platform_version ios $ver $ver -syslibroot "$sdk" -F"$sdk/System/Library/Frameworks" \
+    -L"$sdk/usr/lib" -lSystem -lobjc $cxx -framework CoreFoundation $fw $chained $objs $libs -o "$out"
 rm -rf "$tmp"

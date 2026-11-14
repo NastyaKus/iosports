@@ -50,4 +50,6 @@ mkapp "Sine 440 Hz (RemoteIO)" Sine org.iosrt.sample.sine 12.0 "$root/samples/au
 mkapp "Audio Files Demo" AudioFiles org.iosrt.sample.audiofiles 12.0 "$root/samples/audiofile_demo/main.m" $F -framework UIKit -framework AVFoundation -framework AudioToolbox
 mkapp "Sine 440 Hz (AudioQueue)" AudioQueue org.iosrt.sample.audioqueue 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 mkapp "ObjC Tour (iOS14 chained)" ObjCTour14 org.iosrt.sample.objc14 14.0 --chained "$root/samples/objc_basics/main.m" $F
+"$root/tools/make_dylib_app.sh" "$out" 12.0 >/dev/null
+rm -rf "$out/Dylib Demo.app"; mv "$out/DylibDemo.app" "$out/Dylib Demo.app"
 echo "samples -> $out"
