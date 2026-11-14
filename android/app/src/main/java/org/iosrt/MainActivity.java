@@ -12,6 +12,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -108,16 +109,43 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req != PICK || res != RESULT_OK || data == null) return;
-        Uri uri = data.getData();
-        try {
-            File tmp = new File(getCacheDir(), "import.bin");
-            try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(tmp)) { pipe(in, out); }
-            File dest = importFile(tmp, guessName(uri));
-            note("Imported " + dest.getName());
-            refresh();
-        } catch (Exception e) {
-            new AlertDialog.Builder(this).setTitle("Import failed").setMessage(String.valueOf(e)).setPositiveButton("OK", null).show();
+        final Uri uri = data.getData();
+        final String name = guessName(uri);
+        // big apps (GarageBand: 1.4 GB) are extracted straight from the picked stream on a worker
+        // thread, with the progress shown in a dialog
+        final TextView progress = new TextView(this);
+        progress.setPadding(48, 32, 48, 32);
+        progress.setText("Importing " + name + "...");
+        final AlertDialog dlg = new AlertDialog.Builder(this).setTitle("Import").setView(progress).setCancelable(false).show();
+        new Thread(() -> {
+            try (InputStream raw = getContentResolver().openInputStream(uri)) {
+                CountingStream in = new CountingStream(new BufferedInputStream(raw, 1 << 16), progress, this);
+                File dest = importStream(in, name);
+                runOnUiThread(() -> { dlg.dismiss(); note("Imported " + dest.getName()); refresh(); });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    dlg.dismiss();
+                    new AlertDialog.Builder(this).setTitle("Import failed").setMessage(String.valueOf(e)).setPositiveButton("OK", null).show();
+                });
+            }
+        }, "import").start();
+    }
+
+    /** counts the bytes read and shows them in the import dialog (at most every 8 MB) */
+    private static final class CountingStream extends java.io.FilterInputStream {
+        private final TextView view; private final Activity act; private long total, shown;
+        CountingStream(InputStream in, TextView view, Activity act) { super(in); this.view = view; this.act = act; }
+        private void add(long n) {
+            if (n <= 0) return;
+            total += n;
+            if (total - shown >= (8 << 20)) {
+                shown = total;
+                final String t = "Extracting... " + (total >> 20) + " MB";
+                act.runOnUiThread(() -> view.setText(t));
+            }
         }
+        @Override public int read() throws java.io.IOException { int b = super.read(); if (b >= 0) add(1); return b; }
+        @Override public int read(byte[] b, int off, int len) throws java.io.IOException { int n = super.read(b, off, len); add(n); return n; }
     }
 
     private String guessName(Uri uri) {
@@ -128,14 +156,16 @@ public class MainActivity extends Activity {
     }
 
     /** .ipa / zip: extract the first Payload/*.app (or any *.app) ; otherwise treat as a bare Mach-O. */
-    private File importFile(File f, String name) throws Exception {
+    private File importStream(InputStream in, String name) throws Exception {
         File apps = new File(getFilesDir(), "apps");
         apps.mkdirs();
+        in.mark(8);
         byte[] magic = new byte[4];
-        try (InputStream in = new FileInputStream(f)) { if (in.read(magic) != 4) throw new Exception("file too small"); }
+        if (in.read(magic) != 4) throw new Exception("file too small");
+        in.reset();
         if (magic[0] == 'P' && magic[1] == 'K') {
             File out = null;
-            try (ZipInputStream z = new ZipInputStream(new FileInputStream(f))) {
+            try (ZipInputStream z = new ZipInputStream(in)) {
                 ZipEntry e;
                 while ((e = z.getNextEntry()) != null) {
                     String n = e.getName();
@@ -155,7 +185,7 @@ public class MainActivity extends Activity {
             return out;
         }
         File dst = new File(apps, name);
-        try (InputStream in = new FileInputStream(f); OutputStream o = new FileOutputStream(dst)) { pipe(in, o); }
+        try (OutputStream o = new FileOutputStream(dst)) { pipe(in, o); }
         return dst;
     }
 
