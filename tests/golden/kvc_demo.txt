@@ -1,0 +1,9 @@
+frame via KVC: 10,20 100x50
+center via KVC: 60,45
+alpha 0.50 hidden 1 tag 7
+layer opacity 0.25, alpha now 0.25
+layer position 200,300
+layer bounds 100x50
+inserted below a foreign sibling: index 2 of 3
+animationWillStart fade
+animationDidStop fade finished 1

@@ -136,6 +136,26 @@ static id s_replacingRange(id self, SEL s, NSRange r, id with) {
     RT_SEND2(void, m, "replaceCharactersInRange:withString:", NSRange, r, id, with ? with : rt_str(""));
     return objc_autorelease(m);
 }
+/* the locale only changes collation details; the range/options comparison carries the order */
+static long s_compareLocale(id self, SEL s, id o, unsigned long opts, NSRange r, id loc) {
+    (void)s; (void)loc;
+    return ((long (*)(id, SEL, id, unsigned long, NSRange))objc_msgSend)(self, rt_sel("compare:options:range:"), o, opts, r);
+}
+/* NSDictionary (NSFileAttributes) accessors not covered elsewhere */
+static unsigned long d_attrUL(id self, const char *key) { id v = RT_SEND1(id, self, "objectForKey:", id, rt_str(key)); return v ? RT_SEND0(unsigned long, v, "unsignedLongValue") : 0; }
+static unsigned int d_hfsType(id self, SEL s) { (void)s; return (unsigned int)d_attrUL(self, "NSFileHFSTypeCode"); }
+static unsigned int d_hfsCreator(id self, SEL s) { (void)s; return (unsigned int)d_attrUL(self, "NSFileHFSCreatorCode"); }
+static unsigned long d_posixPerms(id self, SEL s) { (void)s; return d_attrUL(self, "NSFilePosixPermissions"); }
+static unsigned long d_fsNumber(id self, SEL s) { (void)s; return d_attrUL(self, "NSFileSystemNumber"); }
+static unsigned long d_fsFileNumber(id self, SEL s) { (void)s; return d_attrUL(self, "NSFileSystemFileNumber"); }
+static rt_bool d_attrBool(id self, const char *key) { id v = RT_SEND1(id, self, "objectForKey:", id, rt_str(key)); return v ? (RT_SEND0(long, v, "boolValue") & 0xff) : 0; }
+static rt_bool d_extHidden(id self, SEL s) { (void)s; return d_attrBool(self, "NSFileExtensionHidden"); }
+static rt_bool d_immutable(id self, SEL s) { (void)s; return d_attrBool(self, "NSFileImmutable"); }
+static rt_bool d_appendOnly(id self, SEL s) { (void)s; return d_attrBool(self, "NSFileAppendOnly"); }
+static id d_owner(id self, SEL s) { (void)s; return RT_SEND1(id, self, "objectForKey:", id, rt_str("NSFileOwnerAccountName")); }
+static id d_group(id self, SEL s) { (void)s; return RT_SEND1(id, self, "objectForKey:", id, rt_str("NSFileGroupOwnerAccountName")); }
+/* there are no Finder aliases on this file system */
+static id url_resolveAlias(Class c, SEL s, id url, unsigned long o, id *err) { (void)c; (void)s; (void)o; if (err) *err = NULL; return url; }
 static void o_kvo_remove_ctx(id self, SEL s, id obs, id path, void *ctx) { (void)self; (void)s; (void)obs; (void)path; (void)ctx; }
 static id nf_localized(Class c, SEL s, id num, unsigned long style) {
     (void)s; id f = RT_SEND0(id, RT_SEND0(id, (id)c, "alloc"), "init");
@@ -246,6 +266,13 @@ void rt_foundation_more6_init(void) {
     IM(rt_class_named("NSOrderedSet"), "array", os_array); IM(rt_class_named("NSMutableOrderedSet"), "array", os_array);
     IM(rt_class_named("NSMutableArray"), "removeObjectsAtIndexes:", ma_removeAtIndexes);
     IM(rt_class_named("NSString"), "stringByReplacingCharactersInRange:withString:", s_replacingRange);
+    IM(rt_class_named("NSString"), "compare:options:range:locale:", s_compareLocale);
+    Class dict = rt_class_named("NSDictionary");
+    IM(dict, "fileHFSTypeCode", d_hfsType); IM(dict, "fileHFSCreatorCode", d_hfsCreator);
+    IM(dict, "filePosixPermissions", d_posixPerms); IM(dict, "fileSystemNumber", d_fsNumber); IM(dict, "fileSystemFileNumber", d_fsFileNumber);
+    IM(dict, "fileExtensionHidden", d_extHidden); IM(dict, "fileIsImmutable", d_immutable); IM(dict, "fileIsAppendOnly", d_appendOnly);
+    IM(dict, "fileOwnerAccountName", d_owner); IM(dict, "fileGroupOwnerAccountName", d_group);
+    CM(rt_class_named("NSURL"), "URLByResolvingAliasFileAtURL:options:error:", url_resolveAlias);
     IM(o, "removeObserver:forKeyPath:context:", o_kvo_remove_ctx);
     CM(rt_class_named("NSNumberFormatter"), "localizedStringFromNumber:numberStyle:", nf_localized);
     IM(mset, "addObjectsFromArray:", ms_addArray); IM(mset, "setSet:", ms_setSet); IM(mset, "unionSet:", ms_unionSet);

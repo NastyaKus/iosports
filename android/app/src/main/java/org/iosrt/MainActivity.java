@@ -50,6 +50,21 @@ public class MainActivity extends Activity {
                 + "lists them.");
         File last = new File(getFilesDir(), "last_exit.txt");
         if (last.exists()) note("Last run: " + readText(last).trim());
+        final android.content.SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        android.widget.CheckBox fill = new android.widget.CheckBox(this);
+        fill.setText("Stretch apps to the whole screen (older apps may lay out wrongly)");
+        fill.setTextColor(Color.rgb(220, 220, 230));
+        fill.setChecked(prefs.getBoolean("fill", false));
+        fill.setOnCheckedChangeListener((v, on) -> prefs.edit().putBoolean("fill", on).apply());
+        list.addView(fill);
+        File lastLog = new File(getFilesDir(), "last_log.txt");
+        if (lastLog.exists()) {
+            Button showLog = new Button(this);
+            showLog.setText("Log of the last run");
+            showLog.setAllCaps(false);
+            showLog.setOnClickListener(v -> showText("Last log", tail(readText(lastLog), 60000)));
+            list.addView(showLog);
+        }
         title("Bundled demo apps (built from source with the iosrt mini-SDK)");
         File samples = new File(getFilesDir(), "samples");
         copyAssets("samples", samples);
@@ -82,6 +97,7 @@ public class MainActivity extends Activity {
         run.setOnClickListener(v -> {
             Intent i = new Intent(this, RunActivity.class);
             i.putExtra(RunActivity.EXTRA_PATH, app.getAbsolutePath());
+            i.putExtra(RunActivity.EXTRA_FILL, getSharedPreferences("shell", MODE_PRIVATE).getBoolean("fill", false));
             startActivity(i);
         });
         Button rep = new Button(this);
@@ -91,6 +107,27 @@ public class MainActivity extends Activity {
         row.addView(run, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
         row.addView(rep, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         list.addView(row);
+    }
+
+    private static String tail(String s, int max) { return s.length() > max ? s.substring(s.length() - max) : s; }
+    private void showText(String title, String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTypeface(Typeface.MONOSPACE);
+        tv.setTextSize(10);
+        tv.setPadding(24, 24, 24, 24);
+        tv.setTextIsSelectable(true);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(tv);
+        AlertDialog d = new AlertDialog.Builder(this).setTitle(title).setView(sv).setPositiveButton("OK", null)
+                .setNeutralButton("Share", (dlg, w) -> {
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_TEXT, text);
+                    startActivity(Intent.createChooser(send, title));
+                }).create();
+        d.show();
+        sv.post(() -> sv.fullScroll(ScrollView.FOCUS_DOWN));
     }
 
     private void showReport(File app) {

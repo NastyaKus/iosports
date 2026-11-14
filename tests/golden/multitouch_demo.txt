@@ -1,0 +1,15 @@
+keys began at 50,50 (fingers on keys: 1, in event: 1)
+keys began at 150,50 (fingers on keys: 2, in event: 2)
+keys moved at 160,50 (fingers on keys: 2, in event: 2)
+keys ended at 50,50 (fingers on keys: 2, in event: 2)
+keys ended at 160,50 (fingers on keys: 1, in event: 1)
+single began at 50,30 (fingers on single: 1, in event: 1)
+single ended at 50,30 (fingers on single: 1, in event: 1)
+zoom began at 100,60 (fingers on zoom: 1, in event: 1)
+zoom began at 200,60 (fingers on zoom: 2, in event: 2)
+zoom cancelled at 100,60 (fingers on zoom: 2, in event: 2)
+zoom cancelled at 250,60 (fingers on zoom: 2, in event: 2)
+pinch began: scale 1.50, fingers 2
+pinch changed: scale 2.00, fingers 2
+pinch ended: scale 2.00, fingers 1
+done

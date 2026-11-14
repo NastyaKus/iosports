@@ -685,6 +685,7 @@ void rt_foundation_init(void) {
     void rt_urlio_init(void); rt_urlio_init();
     void rt_archiver_init(void); rt_archiver_init();
     void rt_foundation_more6_init(void); rt_foundation_more6_init();
+    void rt_fileenum_init(void); rt_fileenum_init();
     void rt_xmlparser_init(void); rt_xmlparser_init();
 }
 

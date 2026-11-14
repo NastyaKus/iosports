@@ -970,14 +970,15 @@ const char *rt_home_dir(void) {
     return home;
 }
 static id fm_default(Class c, SEL s) { (void)s; return singleton(c, &g_fm); }
-static rt_bool fm_exists(id self, SEL s, id path) { (void)self; (void)s; return path && exists(rt_str_utf8(path)); }
+void rt_trace_file(const char *op, const char *path, int ok);
+static rt_bool fm_exists(id self, SEL s, id path) { (void)self; (void)s; int r = path && exists(rt_str_utf8(path)); if (path) rt_trace_file("exists", rt_str_utf8(path), r); return r; }
 static rt_bool fm_existsDir(id self, SEL s, id path, bool *isdir) {
-    (void)self; (void)s; struct stat st; if (!path || stat(rt_str_utf8(path), &st)) return 0;
+    (void)self; (void)s; struct stat st; int r = path ? stat(rt_str_utf8(path), &st) : -1; if (path) rt_trace_file("exists", rt_str_utf8(path), !r); if (r) return 0;
     if (isdir) *isdir = S_ISDIR(st.st_mode); return 1;
 }
 static id fm_contents(id self, SEL s, id path, id *err) {
     (void)self; (void)s; if (err) *err = NULL;
-    DIR *d = opendir(rt_str_utf8(path)); if (!d) return NULL;
+    DIR *d = path ? opendir(rt_str_utf8(path)) : NULL; if (path) rt_trace_file("contents", rt_str_utf8(path), d != NULL); if (!d) return NULL;
     id a = RT_SEND0(id, (id)RT_CLASS(NSMutableArray), "array"); struct dirent *e;
     while ((e = readdir(d))) { if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue; RT_SEND1(void, a, "addObject:", id, rt_str(e->d_name)); }
     closedir(d);

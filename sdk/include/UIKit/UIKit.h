@@ -54,7 +54,13 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 - (CGPoint)locationInView:(UIView *)v;
 @property (readonly) UIView *view;
 @end
-@interface UIEvent : NSObject @end
+@interface UIEvent : NSObject
+@property (readonly) NSSet *allTouches;
+@property (readonly) NSTimeInterval timestamp;
+- (NSSet *)touchesForView:(UIView *)view;
+- (NSSet *)touchesForWindow:(UIWindow *)window;
+- (NSSet *)touchesForGestureRecognizer:(UIGestureRecognizer *)g;
+@end
 @interface UIScreen : NSObject
 + (UIScreen *)mainScreen;
 @property (readonly) CGRect bounds;
@@ -75,6 +81,8 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 @property (nonatomic, getter=isHidden) BOOL hidden;
 @property (nonatomic) NSInteger tag;
 @property (nonatomic, getter=isUserInteractionEnabled) BOOL userInteractionEnabled;
+@property (nonatomic, getter=isMultipleTouchEnabled) BOOL multipleTouchEnabled;
+@property (nonatomic, getter=isExclusiveTouch) BOOL exclusiveTouch;
 @property (readonly, copy) NSArray<UIView *> *subviews;
 @property (readonly) UIView *superview;
 @property (readonly) UIWindow *window;
@@ -184,7 +192,17 @@ typedef NS_ENUM(NSInteger, UIActivityIndicatorViewStyle) { UIActivityIndicatorVi
 - (instancetype)initWithTarget:(id)target action:(SEL)action;
 @property (readonly) UIGestureRecognizerState state;
 @property (readonly) UIView *view;
+@property (readonly) NSUInteger numberOfTouches;
+@property (nonatomic) BOOL cancelsTouchesInView;
 - (CGPoint)locationInView:(UIView *)v;
+- (CGPoint)locationOfTouch:(NSUInteger)i inView:(UIView *)v;
+@end
+@interface UIPinchGestureRecognizer : UIGestureRecognizer
+@property (nonatomic) CGFloat scale;
+@property (readonly) CGFloat velocity;
+@end
+@interface UIRotationGestureRecognizer : UIGestureRecognizer
+@property (nonatomic) CGFloat rotation;
 @end
 @interface UITapGestureRecognizer : UIGestureRecognizer
 @property (nonatomic) NSUInteger numberOfTapsRequired;
@@ -398,6 +416,30 @@ typedef NS_ENUM(NSInteger, UILayoutConstraintAxis) { UILayoutConstraintAxisHoriz
 @property UILayoutPriority priority;
 @property (getter=isActive) BOOL active;
 @property (readonly) CGFloat multiplier;
+@end
+@interface NSValue (UIGeometry)
++ (NSValue *)valueWithCGRect:(CGRect)r;
++ (NSValue *)valueWithCGPoint:(CGPoint)p;
++ (NSValue *)valueWithCGSize:(CGSize)s;
+@property (readonly) CGRect CGRectValue;
+@property (readonly) CGPoint CGPointValue;
+@property (readonly) CGSize CGSizeValue;
+@end
+@interface UIView (Hierarchy)
+- (void)insertSubview:(UIView *)v atIndex:(NSInteger)i;
+- (void)insertSubview:(UIView *)v belowSubview:(UIView *)sibling;
+- (void)insertSubview:(UIView *)v aboveSubview:(UIView *)sibling;
+- (void)bringSubviewToFront:(UIView *)v;
+- (void)sendSubviewToBack:(UIView *)v;
+@end
+@interface UIView (UIViewAnimation)
++ (void)beginAnimations:(NSString *)animationID context:(void *)context;
++ (void)commitAnimations;
++ (void)setAnimationDuration:(NSTimeInterval)d;
++ (void)setAnimationDelay:(NSTimeInterval)d;
++ (void)setAnimationDelegate:(id)delegate;
++ (void)setAnimationWillStartSelector:(SEL)s;
++ (void)setAnimationDidStopSelector:(SEL)s;
 @end
 @interface UIView (AutoLayout)
 @property BOOL translatesAutoresizingMaskIntoConstraints;

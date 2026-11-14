@@ -15,6 +15,8 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <stdio.h>
 
 RT_DECLARE_CLASS(NSObject);
 RT_DECLARE_CLASS(NSMutableArray);
@@ -61,10 +63,16 @@ static struct touch_ev touchq[512]; static int tq_head, tq_tail;
 /* landscape-only apps: 0 = portrait, else the UIInterfaceOrientation shown (3 LandscapeRight, 4 LandscapeLeft).
  * The app sees a landscape screen; frames are turned into the device's portrait buffer and touches back. */
 int rt_landscape;
+/* the Android view the frames go to is itself landscape (the shell turned the activity) */
+int rt_display_landscape;
 static void orient_screen(void) {
     if (rt_landscape && rt_scr_w < rt_scr_h) { float t = rt_scr_w; rt_scr_w = rt_scr_h; rt_scr_h = t; }
 }
-void iosrt_set_screen(float w, float h, float scale) { if (w > 0) rt_scr_w = w; if (h > 0) rt_scr_h = h; if (scale > 0) rt_scr_scale = scale; orient_screen(); }
+void iosrt_set_screen(float w, float h, float scale) {
+    if (w > 0) rt_scr_w = w; if (h > 0) rt_scr_h = h; if (scale > 0) rt_scr_scale = scale;
+    rt_display_landscape = w > h;
+    orient_screen();
+}
 void iosrt_push_touch_id(int tid, int phase, float x, float y) {
     pthread_mutex_lock(&input_lock);
     int n = (tq_tail + 1) % 512;
@@ -74,6 +82,7 @@ void iosrt_push_touch_id(int tid, int phase, float x, float y) {
 void iosrt_push_touch(int phase, float x, float y) { iosrt_push_touch_id(0, phase, x, y); }
 /* touches given in pixels of the presented frame */
 void rt_push_touch_px(int tid, int phase, float x, float y) {
+    if (rt_display_landscape) { iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale); return; }
     if (rt_landscape == 3) { float lw = rt_scr_h * rt_scr_scale; float nx = y, ny = lw - x; x = nx; y = ny; }        /* lw: portrait buffer width */
     else if (rt_landscape == 4) { float lh = rt_scr_w * rt_scr_scale; float nx = lh - y, ny = x; x = nx; y = ny; }
     iosrt_push_touch_id(tid, phase, x / rt_scr_scale, y / rt_scr_scale);
@@ -313,7 +322,8 @@ static void v_insertSubviewAt(id self, SEL s, id sub, long idx) { (void)s; inser
 static long sub_index(id self, id sub) { id a = V(self)->subviews; for (size_t i = 0; i < rt_array_count(a); i++) if (rt_array_at(a, i) == sub) return (long)i; return -1; }
 static void v_insertBelow(id self, SEL s, id sub, id sib) {
     (void)s; if (!sub) return; if (V(sub)->superview == self) { objc_retain(sub); RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
-    long i = sub_index(self, sib); insert_subview(self, sub, i < 0 ? 0 : i);
+    /* a sibling that is not a subview (or nil): UIKit puts the view on top, as -addSubview: does */
+    long i = sub_index(self, sib); insert_subview(self, sub, i < 0 ? -1 : i);
 }
 static void v_insertAbove(id self, SEL s, id sub, id sib) {
     (void)s; if (!sub) return; if (V(sub)->superview == self) { RT_SEND1(void, V(self)->subviews, "removeObjectIdenticalTo:", id, sub); V(sub)->superview = NULL; RT_SEND0(void, V(sub)->layer, "removeFromSuperlayer"); }
@@ -542,12 +552,22 @@ static void va_withoutAnimation(Class c, SEL s, void *blk) { (void)c; (void)s; i
 static void va_setEnabled(Class c, SEL s, long e) { (void)c; (void)s; anims_enabled = e & 0xff; }
 static rt_bool va_enabled(Class c, SEL s) { (void)c; (void)s; return anims_enabled; }
 /* begin/commitAnimations */
-static struct { id animID; void *ctx; double duration, delay; id delegate; SEL stop; int depth; } legacy;
-static void va_begin(Class c, SEL s, id animID, void *ctx) { (void)c; (void)s; if (!legacy.depth++) { legacy.animID = objc_retain(animID); legacy.ctx = ctx; legacy.duration = 0.2; legacy.delay = 0; legacy.delegate = NULL; legacy.stop = NULL; } }
+/* UIKit's defaults for the delegate's callbacks are -animationWillStart:context: and
+   -animationDidStop:finished:context: (setAnimation...Selector: only renames them) */
+static struct { id animID; void *ctx; double duration, delay; id delegate; SEL stop, start; int depth; } legacy;
+static void va_begin(Class c, SEL s, id animID, void *ctx) {
+    (void)c; (void)s;
+    if (!legacy.depth++) {
+        legacy.animID = objc_retain(animID); legacy.ctx = ctx; legacy.duration = 0.2; legacy.delay = 0; legacy.delegate = NULL;
+        legacy.stop = rt_sel("animationDidStop:finished:context:"); legacy.start = rt_sel("animationWillStart:context:");
+    }
+}
 static void va_commit(Class c, SEL s) {
     (void)c; (void)s; if (!legacy.depth || --legacy.depth) return;
     rt_ui_mark_dirty();
-    if (legacy.delegate && legacy.stop) {
+    if (legacy.delegate && legacy.start && rt_responds(legacy.delegate, legacy.start))
+        ((void (*)(id, SEL, id, void *))objc_msgSend)(legacy.delegate, legacy.start, legacy.animID, legacy.ctx);
+    if (legacy.delegate && legacy.stop && rt_responds(legacy.delegate, legacy.stop)) {
         struct anim_cb *a = calloc(1, sizeof *a); a->target = objc_retain(legacy.delegate); a->sel = legacy.stop; a->animID = legacy.animID; a->ctx = legacy.ctx;
         rt_after(legacy.duration + legacy.delay, anim_completion, a);
     } else objc_release(legacy.animID);
@@ -557,6 +577,7 @@ static void va_setDuration(Class c, SEL s, double d) { (void)c; (void)s; legacy.
 static void va_setDelay(Class c, SEL s, double d) { (void)c; (void)s; legacy.delay = d; }
 static void va_setDelegate(Class c, SEL s, id d) { (void)c; (void)s; legacy.delegate = d; }
 static void va_setStop(Class c, SEL s, SEL sel) { (void)c; (void)s; legacy.stop = sel; }
+static void va_setStart(Class c, SEL s, SEL sel) { (void)c; (void)s; legacy.start = sel; }
 static void va_noopL(Class c, SEL s, long v) { (void)c; (void)s; (void)v; }
 static void va_noop2(Class c, SEL s, long v, id w) { (void)c; (void)s; (void)v; (void)w; }
 
@@ -716,8 +737,21 @@ static id ev_forView(id self, SEL s, id view) {
     for (size_t i = 0; arr && i < rt_array_count(arr); i++) { id t = rt_array_at(arr, i); if (TO(t)->view == view) RT_SEND1(void, out, "addObject:", id, t); }
     return out;
 }
-static id ev_forWindow(id self, SEL s, id w) { (void)w; return ev_all(self, s); }
-static id ev_forGesture(id self, SEL s, id g) { (void)g; return ev_all(self, s); }
+static id ev_forWindow(id self, SEL s, id w) {
+    (void)s; id all = ((struct uievent *)self)->touches, out = RT_SEND0(id, (id)rt_class_named("NSMutableSet"), "set");
+    id arr = all ? RT_SEND0(id, all, "allObjects") : NULL;
+    for (size_t i = 0; arr && i < rt_array_count(arr); i++) { id t = rt_array_at(arr, i); if (TO(t)->window == w) RT_SEND1(void, out, "addObject:", id, t); }
+    return out;
+}
+static id ev_forGesture(id self, SEL s, id g) {
+    (void)s; id all = ((struct uievent *)self)->touches, out = RT_SEND0(id, (id)rt_class_named("NSMutableSet"), "set");
+    id arr = all ? RT_SEND0(id, all, "allObjects") : NULL;
+    for (size_t i = 0; arr && i < rt_array_count(arr); i++) {
+        id t = rt_array_at(arr, i), gs = TO(t)->gestures;
+        for (size_t j = 0; gs && j < rt_array_count(gs); j++) if (rt_array_at(gs, j) == g) { RT_SEND1(void, out, "addObject:", id, t); break; }
+    }
+    return out;
+}
 static double ev_ts(id self, SEL s) { (void)s; return ((struct uievent *)self)->ts; }
 static long ev_type(id self, SEL s) { (void)self; (void)s; return 0; }
 static void ev_dealloc(id self, SEL s) { (void)s; objc_release(((struct uievent *)self)->touches); rt_dealloc_instance(self); }
@@ -732,6 +766,7 @@ struct uigr {
     long kind, ntouch; CGPoint loc, start, last; double startT, lastT; CGPoint vel, transl;
     long tapsReq, touchesReq, taps; double minDur, allowMove; long direction; double scale, rotation, velocity;
     long gen, waiting, pending, minT, maxT, edges; id name; long active; long down;
+    id gtouches; long maxn; double d0, a0, dcur, acur;   /* fingers on this recognizer; pinch/rotation reference */
 };
 #define G(x) ((struct uigr *)(x))
 static id active_gestures;      /* recognizers involved in the current touch sequence */
@@ -763,7 +798,7 @@ static void gr_removeTarget(id self, SEL s, id target, SEL action) {
         if ((!target || t->target == target) && (!action || t->action == action)) RT_SEND1(void, arr, "removeObjectAtIndex:", unsigned long, (unsigned long)i);
     }
 }
-static void gr_dealloc(id self, SEL s) { (void)s; objc_release(G(self)->targets); objc_release(G(self)->requires); objc_release(G(self)->name); rt_dealloc_instance(self); }
+static void gr_dealloc(id self, SEL s) { (void)s; objc_release(G(self)->gtouches); objc_release(G(self)->targets); objc_release(G(self)->requires); objc_release(G(self)->name); rt_dealloc_instance(self); }
 static long gr_state(id self, SEL s) { (void)s; return G(self)->state; }
 static void gr_setState(id self, SEL s, long st) {
     (void)s; struct uigr *g = G(self);
@@ -790,9 +825,16 @@ static void gr_requireFail(id self, SEL s, id other) {
     if (!g->requires) g->requires = mkarray();
     if (other) RT_SEND1(void, g->requires, "addObject:", id, other);
 }
-static unsigned long gr_numTouches(id self, SEL s) { (void)s; return G(self)->down ? (unsigned long)G(self)->ntouch : (G(self)->state == GS_POSSIBLE ? 0 : 1); }
+static unsigned long gr_numTouches(id self, SEL s) {
+    (void)s; struct uigr *g = G(self); size_t n = g->gtouches ? rt_array_count(g->gtouches) : 0;
+    return n ? n : (g->state == GS_POSSIBLE ? 0 : 1);
+}
 static CGPoint gr_location(id self, SEL s, id view) { (void)s; return rt_view_convert(NULL, G(self)->loc, view); }
-static CGPoint gr_locationOfTouch(id self, SEL s, unsigned long i, id view) { (void)i; return gr_location(self, s, view); }
+static CGPoint gr_locationOfTouch(id self, SEL s, unsigned long i, id view) {
+    struct uigr *g = G(self);
+    if (g->gtouches && i < rt_array_count(g->gtouches)) return rt_view_convert(NULL, TO(rt_array_at(g->gtouches, i))->pt, view);
+    return gr_location(self, s, view);
+}
 static void gr_reset(id self, SEL s) { (void)self; (void)s; }
 static void gr_ignoreTouch(id self, SEL s, id t, id ev) { (void)self; (void)s; (void)t; (void)ev; }
 static id gr_name(id self, SEL s) { (void)s; return G(self)->name; }
@@ -830,12 +872,40 @@ static unsigned long gr_direction(id self, SEL s) { (void)s; return (unsigned lo
 static void gr_setDirection(id self, SEL s, unsigned long v) { (void)s; G(self)->direction = (long)v; }
 /* pinch / rotation */
 static double gr_scale(id self, SEL s) { (void)s; return G(self)->scale; }
-static void gr_setScale(id self, SEL s, double v) { (void)s; G(self)->scale = v; }
+static void gr_setScale(id self, SEL s, double v) { (void)s; struct uigr *g = G(self); g->scale = v; if (g->dcur > 0 && v > 0) g->d0 = g->dcur / v; }
 static double gr_rotation(id self, SEL s) { (void)s; return G(self)->rotation; }
-static void gr_setRotation(id self, SEL s, double v) { (void)s; G(self)->rotation = v; }
+static void gr_setRotation(id self, SEL s, double v) { (void)s; struct uigr *g = G(self); g->rotation = v; g->a0 = g->acur - v; }
 static double gr_velocityScalar(id self, SEL s) { (void)s; return G(self)->velocity; }
 
 static CGPoint touch_pt(id touches) { id t = touches ? RT_SEND0(id, touches, "anyObject") : NULL; return t ? TO(t)->pt : (CGPoint){ 0, 0 }; }
+/* centroid of the fingers a recognizer tracks (UIKit reports it as the gesture's location) */
+static CGPoint g_centroid(struct uigr *g, id touches) {
+    size_t n = g->gtouches ? rt_array_count(g->gtouches) : 0;
+    if (!n) return touch_pt(touches);
+    CGPoint c = { 0, 0 };
+    for (size_t i = 0; i < n; i++) { CGPoint p = TO(rt_array_at(g->gtouches, i))->pt; c.x += p.x; c.y += p.y; }
+    c.x /= (double)n; c.y /= (double)n;
+    return c;
+}
+static int g_two(struct uigr *g, double *dist, double *ang) {
+    if (!g->gtouches || rt_array_count(g->gtouches) < 2) return 0;
+    CGPoint a = TO(rt_array_at(g->gtouches, 0))->pt, b = TO(rt_array_at(g->gtouches, 1))->pt;
+    *dist = hypot(b.x - a.x, b.y - a.y); *ang = atan2(b.y - a.y, b.x - a.x);
+    return 1;
+}
+static void g_add_touches(struct uigr *g, id touches) {
+    if (!g->gtouches) g->gtouches = mkarray();
+    id arr = touches ? RT_SEND0(id, touches, "allObjects") : NULL;
+    for (size_t i = 0; arr && i < rt_array_count(arr); i++) {
+        id t = rt_array_at(arr, i); int have = 0;
+        for (size_t j = 0; j < rt_array_count(g->gtouches); j++) if (rt_array_at(g->gtouches, j) == t) have = 1;
+        if (!have) RT_SEND1(void, g->gtouches, "addObject:", id, t);
+    }
+}
+static void g_remove_touches(struct uigr *g, id touches) {
+    id arr = touches ? RT_SEND0(id, touches, "allObjects") : NULL;
+    for (size_t i = 0; g->gtouches && arr && i < rt_array_count(arr); i++) RT_SEND1(void, g->gtouches, "removeObjectIdenticalTo:", id, rt_array_at(arr, i));
+}
 struct tap_timer { id g; long gen; };
 static void tap_timeout(void *p) {
     struct tap_timer *t = p; struct uigr *g = G(t->g);
@@ -850,8 +920,23 @@ static void long_timeout(void *p) {
 /* built-in recognition logic (subclasses override these and call super) */
 static void gr_touchesBegan(id self, SEL s, id touches, id ev) {
     (void)s; (void)ev; struct uigr *g = G(self);
-    CGPoint p = touch_pt(touches); double now = rt_now();
-    g->down = 1; g->ntouch = 1; g->loc = g->last = p; g->lastT = now; g->vel = (CGPoint){ 0, 0 };
+    size_t before = g->gtouches ? rt_array_count(g->gtouches) : 0;
+    CGPoint oldc = g_centroid(g, touches);
+    g_add_touches(g, touches);
+    size_t n = rt_array_count(g->gtouches);
+    if ((long)n > g->maxn) g->maxn = (long)n;
+    g->down = 1; g->ntouch = (long)n;
+    CGPoint p = g_centroid(g, touches); double now = rt_now();
+    double d, a;
+    if (g_two(g, &d, &a) && before < 2) { g->d0 = g->dcur = d; g->a0 = g->acur = a; g->scale = 1; g->rotation = 0; }
+    if (before > 0) {
+        /* another finger joins: the gesture's location jumps to the new centroid without moving it */
+        g->start.x += p.x - oldc.x; g->start.y += p.y - oldc.y; g->last = g->loc = p;
+        if (g->kind == GK_TAP && g->maxn > g->touchesReq) gr_setState(self, NULL, GS_FAILED);
+        return;
+    }
+    g->maxn = (long)n;
+    g->loc = g->last = p; g->lastT = now; g->vel = (CGPoint){ 0, 0 };
     if (g->kind == GK_TAP) {
         if (g->taps == 0) g->start = p;
         else if (hypot(p.x - g->start.x, p.y - g->start.y) > 40) { gr_setState(self, NULL, GS_FAILED); return; }
@@ -861,7 +946,7 @@ static void gr_touchesBegan(id self, SEL s, id touches, id ev) {
 }
 static void gr_touchesMoved(id self, SEL s, id touches, id ev) {
     (void)s; (void)ev; struct uigr *g = G(self);
-    CGPoint p = touch_pt(touches); double now = rt_now(), dt = now - g->lastT;
+    CGPoint p = g_centroid(g, touches); double now = rt_now(), dt = now - g->lastT;
     if (dt > 0.001) { g->vel = (CGPoint){ (p.x - g->last.x) / dt, (p.y - g->last.y) / dt }; }
     g->last = p; g->lastT = now; g->loc = p;
     double dist = hypot(p.x - g->start.x, p.y - g->start.y);
@@ -872,7 +957,7 @@ static void gr_touchesMoved(id self, SEL s, id touches, id ev) {
         else if (g->state == GS_BEGAN || g->state == GS_CHANGED) gr_setState(self, NULL, GS_CHANGED);
         break;
     case GK_PAN:
-        if (g->state == GS_POSSIBLE && dist > 10) gr_setState(self, NULL, GS_BEGAN);
+        if (g->state == GS_POSSIBLE && dist > 10 && g->ntouch >= g->minT && g->ntouch <= g->maxT) gr_setState(self, NULL, GS_BEGAN);
         else if (g->state == GS_BEGAN || g->state == GS_CHANGED) gr_setState(self, NULL, GS_CHANGED);
         break;
     case GK_SWIPE: {
@@ -882,15 +967,42 @@ static void gr_touchesMoved(id self, SEL s, id touches, id ev) {
         if (hypot(dx, dy) > 50 && (g->direction & dir)) gr_setState(self, NULL, GS_ENDED);
         break;
     }
+    case GK_PINCH: case GK_ROT: {
+        double d, a;
+        if (!g_two(g, &d, &a)) break;
+        double prevScale = g->scale;
+        g->dcur = d; g->acur = a;
+        if (g->d0 > 0) g->scale = d / g->d0;
+        double da = a - g->a0; while (da > M_PI) da -= 2 * M_PI; while (da < -M_PI) da += 2 * M_PI;
+        g->rotation = da;
+        if (dt > 0.001) g->velocity = g->kind == GK_PINCH ? (g->scale - prevScale) / dt : 0;
+        if (g->state == GS_POSSIBLE) {
+            if ((g->kind == GK_PINCH && fabs(d - g->d0) > 8) || (g->kind == GK_ROT && fabs(da) > 0.08)) gr_setState(self, NULL, GS_BEGAN);
+        } else if (g->state == GS_BEGAN || g->state == GS_CHANGED) gr_setState(self, NULL, GS_CHANGED);
+        break;
+    }
     default: break;
     }
 }
 static void gr_touchesEnded(id self, SEL s, id touches, id ev) {
     (void)s; (void)ev; struct uigr *g = G(self);
+    CGPoint oldc = g_centroid(g, touches);
+    g_remove_touches(g, touches);
+    size_t left = g->gtouches ? rt_array_count(g->gtouches) : 0;
+    g->ntouch = (long)left;
+    if (left > 0) {
+        /* a finger lifts but others stay: keep the location continuous */
+        CGPoint p = g_centroid(g, NULL);
+        g->start.x += p.x - oldc.x; g->start.y += p.y - oldc.y; g->last = g->loc = p;
+        if ((g->kind == GK_PINCH || g->kind == GK_ROT) && left < 2)
+            gr_setState(self, NULL, g->state == GS_POSSIBLE ? GS_FAILED : GS_ENDED);
+        return;
+    }
     g->loc = touch_pt(touches); g->down = 0;
     switch (g->kind) {
     case GK_TAP:
         if (g->state != GS_POSSIBLE) break;
+        if (g->maxn != g->touchesReq) { gr_setState(self, NULL, GS_FAILED); break; }
         if (++g->taps >= g->tapsReq) gr_setState(self, NULL, GS_ENDED);
         else { struct tap_timer *t = malloc(sizeof *t); t->g = objc_retain(self); t->gen = g->gen; rt_after(0.35, tap_timeout, t); }
         break;
@@ -898,12 +1010,18 @@ static void gr_touchesEnded(id self, SEL s, id touches, id ev) {
         if (g->state == GS_BEGAN || g->state == GS_CHANGED) gr_setState(self, NULL, GS_ENDED); else gr_setState(self, NULL, GS_FAILED);
         break;
     case GK_SWIPE: if (g->state == GS_POSSIBLE) gr_setState(self, NULL, GS_FAILED); break;
-    case GK_PINCH: case GK_ROT: gr_setState(self, NULL, g->state == GS_POSSIBLE ? GS_FAILED : GS_ENDED); break;
+    case GK_PINCH: case GK_ROT:
+        if (g->state != GS_FAILED && g->state != GS_ENDED) gr_setState(self, NULL, g->state == GS_POSSIBLE ? GS_FAILED : GS_ENDED);
+        break;
     default: break;
     }
 }
 static void gr_touchesCancelled(id self, SEL s, id touches, id ev) {
-    (void)s; (void)touches; (void)ev; struct uigr *g = G(self); g->down = 0;
+    (void)s; (void)ev; struct uigr *g = G(self);
+    g_remove_touches(g, touches);
+    g->ntouch = g->gtouches ? (long)rt_array_count(g->gtouches) : 0;
+    if (g->ntouch > 0) return;
+    g->down = 0;
     if (g->state == GS_BEGAN || g->state == GS_CHANGED) gr_setState(self, NULL, GS_CANCELLED); else if (g->state == GS_POSSIBLE) gr_setState(self, NULL, GS_FAILED);
 }
 static void v_addGesture(id self, SEL s, id g) {
@@ -916,9 +1034,18 @@ static void v_addGesture(id self, SEL s, id g) {
 }
 static void v_removeGesture(id self, SEL s, id g) { (void)s; struct uiview *v = V(self); if (!v->gestures || !g) return; G(g)->view = NULL; RT_SEND1(void, v->gestures, "removeObjectIdenticalTo:", id, g); }
 
-/* --- dispatcher (seq_view: hit view of the current touch sequence) */
-static long seq_view_cancelled;
-static id seq_touch, seq_event;
+/* --- dispatcher: one slot per finger. Each touch keeps its hit view and the
+   recognizers collected for it; one UIEvent carries all touches that are down. */
+#define MAX_TOUCHES 11
+struct tslot { int used, tid, cancelled, ignored, left_slop; id touch, view; CGPoint start; };
+static struct tslot tslots[MAX_TOUCHES];
+static id g_event;              /* the multi-touch UIEvent; its set holds the active touches */
+static struct tslot *cur_slot;  /* touch being dispatched (delegate questions refer to it) */
+static int touch_has_gesture(struct tslot *t, id g) {
+    id gs = t->touch ? TO(t->touch)->gestures : NULL;
+    for (size_t i = 0; gs && i < rt_array_count(gs); i++) if (rt_array_at(gs, i) == g) return 1;
+    return 0;
+}
 static void send_actions(id g) {
     id arr = objc_retain(RT_SEND0(id, G(g)->targets, "copy"));
     for (size_t i = 0; i < rt_array_count(arr); i++) {
@@ -934,14 +1061,17 @@ static int simultaneous(id a, id b) {
     if (db && rt_responds(db, q) && (RT_SEND2(long, db, "gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:", id, b, id, a) & 0xff)) return 1;
     return 0;
 }
-static id seq_view;
 static int should_begin(id g) {
     /* a scroll view's own pan only takes over content touches it may cancel
        (UIScrollView -touchesShouldCancelInContentView:, NO for controls) */
     id sv = G(g)->view;
-    if (sv && rt_is_kind_of(sv, RT_CLASS(UIScrollView)) && ((struct uiscroll *)sv)->pan == g && seq_view && seq_view != sv) {
-        if (!((struct uiscroll *)sv)->cancelsContent) return 0;
-        if (!(RT_SEND1(long, sv, "touchesShouldCancelInContentView:", id, seq_view) & 0xff)) return 0;
+    if (sv && rt_is_kind_of(sv, RT_CLASS(UIScrollView)) && ((struct uiscroll *)sv)->pan == g) {
+        for (int i = 0; i < MAX_TOUCHES; i++) {
+            struct tslot *t = &tslots[i];
+            if (!t->used || t->ignored || !t->view || t->view == sv || !touch_has_gesture(t, g)) continue;
+            if (!((struct uiscroll *)sv)->cancelsContent) return 0;
+            if (!(RT_SEND1(long, sv, "touchesShouldCancelInContentView:", id, t->view) & 0xff)) return 0;
+        }
     }
     id d = G(g)->delegate;
     if (d && rt_responds(d, rt_sel("gestureRecognizerShouldBegin:")) && !(RT_SEND1(long, d, "gestureRecognizerShouldBegin:", id, g) & 0xff)) return 0;
@@ -962,12 +1092,17 @@ static int blocked_by_other(id g) {
     for (size_t i = 0; req && i < rt_array_count(req); i++) { long st = G(rt_array_at(req, i))->state; if (st == GS_BEGAN || st == GS_CHANGED || st == GS_ENDED) return 1; }
     return 0;
 }
-static void cancel_view_touches(void) {
-    if (!seq_view || seq_view_cancelled) return;
-    seq_view_cancelled = 1;
-    id set = rt_set_new(&seq_touch, 1);
-    ((void (*)(id, SEL, id, id))objc_msgSend)(seq_view, rt_sel("touchesCancelled:withEvent:"), set, seq_event);
-    objc_release(set);
+/* a recognizer that cancels touches in its view takes the touches it was tracking away from their views */
+static void cancel_view_touches(id g) {
+    for (int i = 0; i < MAX_TOUCHES; i++) {
+        struct tslot *t = &tslots[i];
+        if (!t->used || t->ignored || t->cancelled || !t->view || !touch_has_gesture(t, g)) continue;
+        t->cancelled = 1;
+        TO(t->touch)->phase = 4;
+        id set = rt_set_new(&t->touch, 1);
+        ((void (*)(id, SEL, id, id))objc_msgSend)(t->view, rt_sel("touchesCancelled:withEvent:"), set, g_event);
+        objc_release(set);
+    }
 }
 static void g_process(void) {
     if (!active_gestures) return;
@@ -988,13 +1123,13 @@ static void g_process(void) {
                         if (y->state == GS_POSSIBLE && !y->waiting) { y->state = GS_FAILED; changed = 1; }
                         else if (y->state == GS_BEGAN || y->state == GS_CHANGED) { /* already recognized one wins */ }
                     }
-                    if (x->cancels) cancel_view_touches();
+                    if (x->cancels) cancel_view_touches(g);
                 }
             }
             if (x->waiting && !waits_for_other(g)) {
                 long target = x->waiting; x->waiting = 0;
                 if (blocked_by_other(g)) x->state = GS_FAILED;
-                else { x->state = target; x->pending = 1; if (x->cancels) cancel_view_touches(); }
+                else { x->state = target; x->pending = 1; if (x->cancels) cancel_view_touches(g); }
                 changed = 1;
             }
             if (x->pending) { x->pending = 0; send_actions(g); changed = 1; }
@@ -1009,7 +1144,7 @@ static void g_process(void) {
         for (size_t i = 0; i < rt_array_count(active_gestures); i++) {
             id g = rt_array_at(active_gestures, i); struct uigr *x = G(g);
             if (x->state == GS_ENDED || x->state == GS_CANCELLED || x->state == GS_FAILED) {
-                x->state = GS_POSSIBLE; x->taps = 0; x->gen++; x->active = 0; x->waiting = 0;
+                x->state = GS_POSSIBLE; x->taps = 0; x->gen++; x->active = 0; x->waiting = 0; x->maxn = 0;
                 RT_SEND0(void, g, "reset");
             } else if (x->state == GS_POSSIBLE && (x->taps > 0 || x->waiting)) all_done = 0;
             else if (x->state == GS_POSSIBLE) { x->gen++; x->active = 0; }
@@ -1019,8 +1154,10 @@ static void g_process(void) {
     }
     rt_ui_mark_dirty();
 }
-static void collect_gestures(id view, id hit) {
+/* the recognizers a new touch on hit takes part in: added to the active set and returned */
+static id collect_gestures(id view, id hit, id touch) {
     if (!active_gestures) active_gestures = mkarray();
+    id mine = mkarray();
     for (id v = view; v; v = V(v)->superview) {
         id gs = V(v)->gestures;
         for (size_t i = 0; gs && i < rt_array_count(gs); i++) {
@@ -1029,13 +1166,15 @@ static void collect_gestures(id view, id hit) {
             /* controls keep their own taps: a tap recognizer above a UIControl doesn't fire */
             if (hit && v != hit && rt_is_kind_of(hit, RT_CLASS(UIControl)) && (x->kind == GK_TAP)) continue;
             id d = x->delegate;
-            if (d && rt_responds(d, rt_sel("gestureRecognizer:shouldReceiveTouch:")) && !(RT_SEND2(long, d, "gestureRecognizer:shouldReceiveTouch:", id, g, id, seq_touch) & 0xff)) continue;
+            if (d && rt_responds(d, rt_sel("gestureRecognizer:shouldReceiveTouch:")) && !(RT_SEND2(long, d, "gestureRecognizer:shouldReceiveTouch:", id, g, id, touch) & 0xff)) continue;
             int present = 0;
             for (size_t j = 0; j < rt_array_count(active_gestures); j++) if (rt_array_at(active_gestures, j) == g) present = 1;
             if (!present) { if (x->state != GS_POSSIBLE) { x->state = GS_POSSIBLE; x->taps = 0; } RT_SEND1(void, active_gestures, "addObject:", id, g); }
             x->active = 1;
+            RT_SEND1(void, mine, "addObject:", id, g);
         }
     }
+    return mine;
 }
 /* Touch "slop": a resting finger on Android produces a stream of ACTION_MOVE events
    (same or jittering position). iOS reports a stationary finger without touchesMoved,
@@ -1043,12 +1182,45 @@ static void collect_gestures(id view, id hit) {
    back until the touch leaves a small radius around where it began; a touch that ends
    inside it ends where it began. Moves to the same position are never delivered. */
 #define TOUCH_SLOP_PT 2.0
-static CGPoint seq_start; static int seq_left_slop;
+static struct tslot *slot_for(int tid) { for (int i = 0; i < MAX_TOUCHES; i++) if (tslots[i].used && tslots[i].tid == tid) return &tslots[i]; return NULL; }
+static struct tslot *slot_free(void) { for (int i = 0; i < MAX_TOUCHES; i++) if (!tslots[i].used) return &tslots[i]; return NULL; }
+static void slot_release(struct tslot *t) {
+    if (t->touch && g_event) RT_SEND1(void, ((struct uievent *)g_event)->touches, "removeObject:", id, t->touch);
+    objc_release(t->touch); objc_release(t->view);
+    memset(t, 0, sizeof *t);
+}
+static int any_touch_down(void) { for (int i = 0; i < MAX_TOUCHES; i++) if (tslots[i].used && !tslots[i].ignored) return 1; return 0; }
+/* send a phase of one touch to the recognizers it belongs to (those still undecided or running) */
+static void touch_to_gestures(struct tslot *t, const char *sel, id set) {
+    id gs = TO(t->touch)->gestures ? RT_SEND0(id, TO(t->touch)->gestures, "copy") : NULL;
+    for (size_t i = 0; gs && i < rt_array_count(gs); i++) {
+        id g = rt_array_at(gs, i); long st = G(g)->state;
+        if (st == GS_POSSIBLE || st == GS_BEGAN || st == GS_CHANGED) ((void (*)(id, SEL, id, id))objc_msgSend)(g, rt_sel(sel), set, g_event);
+    }
+    objc_release(gs);
+}
+/* recognizers whose subclasses never call super keep no stale fingers */
+static void forget_touch_in_gestures(id touch) {
+    id gs = TO(touch)->gestures;
+    for (size_t i = 0; gs && i < rt_array_count(gs); i++) {
+        struct uigr *x = G(rt_array_at(gs, i));
+        if (x->gtouches) RT_SEND1(void, x->gtouches, "removeObjectIdenticalTo:", id, touch);
+        x->ntouch = x->gtouches ? (long)rt_array_count(x->gtouches) : 0;
+        if (!x->ntouch) x->down = 0;
+    }
+}
+static CGPoint last_tap_pt; static double last_tap_ts; static long last_tap_count;
 static void deliver_touch(struct touch_ev *e) {
     struct uiapp *a = (struct uiapp *)g_app;
     if (!a || a->ignoring) return;
     double now = rt_now();
+    if (!g_event) { g_event = rt_alloc_instance(RT_CLASS(UIEvent), 0); ((struct uievent *)g_event)->touches = RT_SEND0(id, RT_SEND0(id, (id)rt_class_named("NSMutableSet"), "alloc"), "init"); }
+    ((struct uievent *)g_event)->ts = now;
     if (e->phase == 0) {
+        struct tslot *old = slot_for(e->tid);
+        if (old) { struct touch_ev up = { 2, e->x, e->y, e->tid }; deliver_touch(&up); }   /* a lost "up" */
+        struct tslot *t = slot_free();
+        if (!t) return;
         /* topmost visible window that contains the point (by level, then order) */
         id win = NULL; double best = -1e18;
         for (size_t i = 0; i < rt_array_count(a->windows); i++) {
@@ -1058,54 +1230,59 @@ static void deliver_touch(struct touch_ev *e) {
         }
         if (!win) win = a->keyWindow;
         if (!win) return;
-        objc_release(seq_touch); objc_release(seq_event);
-        seq_touch = rt_alloc_instance(RT_CLASS(UITouch), 0);
-        struct uitouch *t = TO(seq_touch);
-        t->pt = t->prev = (CGPoint){ e->x, e->y }; t->phase = 0; t->ts = now; t->tapCount = 1; t->window = win; t->tid = e->tid;
-        seq_start = t->pt; seq_left_slop = 0;
-        seq_event = rt_alloc_instance(RT_CLASS(UIEvent), 0);
-        ((struct uievent *)seq_event)->touches = rt_set_new(&seq_touch, 1); ((struct uievent *)seq_event)->ts = now;
-        CGPoint wp = rt_view_convert(NULL, t->pt, win);
-        id hit = ((id (*)(id, SEL, CGPoint, id))objc_msgSend)(win, rt_sel("hitTest:withEvent:"), wp, seq_event);
-        objc_release(seq_view); seq_view = objc_retain(hit); seq_view_cancelled = 0;
-        t->view = hit;
-        if (!hit) return;
-        collect_gestures(hit, hit);
-        t->gestures = objc_retain(RT_SEND0(id, active_gestures, "copy"));
-        id set = rt_set_new(&seq_touch, 1);
-        for (size_t i = 0; i < rt_array_count(active_gestures); i++) {
-            id g = rt_array_at(active_gestures, i);
-            if (G(g)->state == GS_POSSIBLE || G(g)->state == GS_BEGAN || G(g)->state == GS_CHANGED) ((void (*)(id, SEL, id, id))objc_msgSend)(g, rt_sel("touchesBegan:withEvent:"), set, seq_event);
+        memset(t, 0, sizeof *t); t->used = 1; t->tid = e->tid;
+        t->touch = rt_alloc_instance(RT_CLASS(UITouch), 0);
+        struct uitouch *to = TO(t->touch);
+        to->pt = to->prev = (CGPoint){ e->x, e->y }; to->phase = 0; to->ts = now; to->window = win; to->tid = e->tid;
+        to->tapCount = (now - last_tap_ts < 0.35 && hypot(e->x - last_tap_pt.x, e->y - last_tap_pt.y) < 30) ? last_tap_count + 1 : 1;
+        t->start = to->pt;
+        CGPoint wp = rt_view_convert(NULL, to->pt, win);
+        id hit = ((id (*)(id, SEL, CGPoint, id))objc_msgSend)(win, rt_sel("hitTest:withEvent:"), wp, g_event);
+        to->view = hit; t->view = objc_retain(hit);
+        if (!hit) { t->ignored = 1; return; }
+        /* UIKit: a view without multipleTouchEnabled gets only the first finger; exclusive touch views keep others out */
+        for (int i = 0; i < MAX_TOUCHES; i++) {
+            struct tslot *o = &tslots[i];
+            if (o == t || !o->used || o->ignored || !o->view) continue;
+            if ((o->view == hit && !V(hit)->multitouch) || V(o->view)->exclusive || V(hit)->exclusive) { t->ignored = 1; return; }
         }
+        RT_SEND1(void, ((struct uievent *)g_event)->touches, "addObject:", id, t->touch);
+        cur_slot = t;
+        to->gestures = collect_gestures(hit, hit, t->touch);
+        id set = rt_set_new(&t->touch, 1);
+        touch_to_gestures(t, "touchesBegan:withEvent:", set);
         g_process();
-        if (!seq_view_cancelled) ((void (*)(id, SEL, id, id))objc_msgSend)(hit, rt_sel("touchesBegan:withEvent:"), set, seq_event);
+        if (!t->cancelled) ((void (*)(id, SEL, id, id))objc_msgSend)(hit, rt_sel("touchesBegan:withEvent:"), set, g_event);
         objc_release(set);
+        cur_slot = NULL;
     } else {
-        if (!seq_touch || !seq_view) return;
-        struct uitouch *t = TO(seq_touch);
+        struct tslot *t = slot_for(e->tid);
+        if (!t) return;
+        if (t->ignored) { if (e->phase != 1) slot_release(t); return; }
+        struct uitouch *to = TO(t->touch);
         CGPoint np = { e->x, e->y };
-        if (!seq_left_slop) {
-            if (hypot(np.x - seq_start.x, np.y - seq_start.y) < TOUCH_SLOP_PT) {
+        if (!t->left_slop) {
+            if (hypot(np.x - t->start.x, np.y - t->start.y) < TOUCH_SLOP_PT) {
                 if (e->phase == 1) return;   /* still resting */
-                np = seq_start;              /* a tap ends where it began */
-            } else seq_left_slop = 1;
+                np = t->start;               /* a tap ends where it began */
+            } else t->left_slop = 1;
         }
-        if (e->phase == 1 && fabs(np.x - t->pt.x) < 0.01 && fabs(np.y - t->pt.y) < 0.01) return;
-        t->prev = t->pt; t->pt = np; t->ts = now; t->phase = e->phase == 1 ? 1 : 3;
-        ((struct uievent *)seq_event)->ts = now;
-        id set = rt_set_new(&seq_touch, 1);
+        if (e->phase == 1 && fabs(np.x - to->pt.x) < 0.01 && fabs(np.y - to->pt.y) < 0.01) return;
+        to->prev = to->pt; to->pt = np; to->ts = now; to->phase = e->phase == 1 ? 1 : 3;
+        cur_slot = t;
+        id set = rt_set_new(&t->touch, 1);
         const char *sel = e->phase == 1 ? "touchesMoved:withEvent:" : "touchesEnded:withEvent:";
-        id gs = active_gestures ? RT_SEND0(id, active_gestures, "copy") : NULL;
-        for (size_t i = 0; gs && i < rt_array_count(gs); i++) {
-            id g = rt_array_at(gs, i); long st = G(g)->state;
-            if (st == GS_POSSIBLE || st == GS_BEGAN || st == GS_CHANGED) ((void (*)(id, SEL, id, id))objc_msgSend)(g, rt_sel(sel), set, seq_event);
-            if (e->phase != 1) G(g)->down = 0;
-        }
-        objc_release(gs);
+        touch_to_gestures(t, sel, set);
+        if (e->phase != 1) forget_touch_in_gestures(t->touch);
         g_process();
-        if (!seq_view_cancelled) ((void (*)(id, SEL, id, id))objc_msgSend)(seq_view, rt_sel(sel), set, seq_event);
+        if (!t->cancelled && t->view) ((void (*)(id, SEL, id, id))objc_msgSend)(t->view, rt_sel(sel), set, g_event);
         objc_release(set);
-        if (e->phase != 1) { objc_release(seq_view); seq_view = NULL; g_process(); }
+        cur_slot = NULL;
+        if (e->phase != 1) {
+            if (!t->left_slop) { last_tap_pt = t->start; last_tap_ts = now; last_tap_count = to->tapCount; }
+            slot_release(t);
+            if (!any_touch_down()) g_process();
+        }
     }
     rt_ui_mark_dirty();
 }
@@ -1114,6 +1291,7 @@ static void deliver_touch(struct touch_ev *e) {
 int rt_controls_continuous(void);
 static Class find_delegate_class(void);
 /* scripted input for headless tests: IOSRT_SCRIPT="5:tap:100,200;9:quit" (also down/move/up/drag:x,y,x2,y2, wait:ms) */
+static double script_wait_until;
 static void run_script(unsigned frame) {
     const char *s = getenv("IOSRT_SCRIPT");
     if (!s) return;
@@ -1124,11 +1302,15 @@ static void run_script(unsigned frame) {
         if (n < 2 || f != frame) continue;
         if (!strcmp(cmd, "tap")) { iosrt_push_touch(0, x, y); iosrt_push_touch(2, x, y); }
         else if (!strcmp(cmd, "down")) iosrt_push_touch(0, x, y);
+        /* extra fingers: pdown/pmove/pup:id,x,y */
+        else if (!strcmp(cmd, "pdown")) iosrt_push_touch_id((int)x, 0, y, x2);
+        else if (!strcmp(cmd, "pmove")) iosrt_push_touch_id((int)x, 1, y, x2);
+        else if (!strcmp(cmd, "pup")) iosrt_push_touch_id((int)x, 2, y, x2);
         else if (!strcmp(cmd, "move")) iosrt_push_touch(1, x, y);
         else if (!strcmp(cmd, "up")) iosrt_push_touch(2, x, y);
         else if (!strcmp(cmd, "drag")) { iosrt_push_touch(0, x, y); for (int i = 1; i <= 8; i++) iosrt_push_touch(1, x + (x2 - x) * i / 8, y + (y2 - y) * i / 8); iosrt_push_touch(2, x2, y2); }
         else if (!strcmp(cmd, "quit")) rt_quit_requested = 1;
-        else if (!strcmp(cmd, "wait")) usleep((useconds_t)(x * 1000));   /* N:wait:ms - real time passes (long presses, timers) */
+        else if (!strcmp(cmd, "wait")) script_wait_until = rt_now() + x / 1000.0;   /* N:wait:ms - real time passes; the run loop keeps running */
     }
     free(dup);
 }
@@ -1142,6 +1324,13 @@ static void dump_view(id v, int depth) {
                      v_hidden(v, NULL) ? " hidden" : "", V(v)->vc ? " vc=" : "", V(v)->vc ? rt_class_name(V(v)->vc->isa) : "",
                      txt && rt_is_kind_of(txt, rt_class_named("NSString")) ? " text=" : "", txt && rt_is_kind_of(txt, rt_class_named("NSString")) ? rt_str_utf8(txt) : "",
                      alpha < 0.999 ? " alpha=" : "", alpha < 0.999 ? (alpha < 0.01 ? "0" : "<1") : "");
+    /* background colour and the object, to tell plain views apart */
+    id bg = RT_SEND0(id, v, "backgroundColor");
+    if (bg && n > 1 && n < (int)sizeof line - 64) {
+        float c[4]; rt_color_rgba(bg, c);
+        if (c[3] > 0.01f) n += snprintf(line + n - 1, sizeof line - (size_t)n, " bg=%.2f,%.2f,%.2f,%.2f\n", c[0], c[1], c[2], c[3]) - 1;
+    }
+    if (n > 1 && n < (int)sizeof line - 32) n += snprintf(line + n - 1, sizeof line - (size_t)n, " %p\n", (void *)v) - 1;
     rt_out(2, line, (size_t)n);
     for (size_t i = 0; V(v)->subviews && i < rt_array_count(V(v)->subviews); i++) dump_view(rt_array_at(V(v)->subviews, i), depth + 1);
 }
@@ -1174,7 +1363,7 @@ static void render_frame(unsigned frame, int want_trace) {
         } else free(sb.buf);
     }
     if (rt_plat->present_frame) {
-        if (!rt_landscape) rt_plat->present_frame(surf->px, surf->w, surf->h, surf->stride);
+        if (!rt_landscape || rt_display_landscape) rt_plat->present_frame(surf->px, surf->w, surf->h, surf->stride);
         else {   /* turn the landscape frame into the device's portrait buffer */
             static uint32_t *rot; static size_t rotn;
             int W = surf->w, H = surf->h; size_t need = (size_t)W * H;
@@ -1246,8 +1435,40 @@ static void choose_compat_screen(void) {
     }
     if (rt_landscape) { double t = bw; bw = bh; bh = t; }
     if (bw >= rt_scr_w && bh >= rt_scr_h) return;
+    /* IOSRT_FILL=1: keep the short side the app was made for and stretch the long side to the
+       display's aspect ratio. Off by default: like iOS on taller iPhones the app keeps the size
+       it knows (older apps pick their layouts by exact screen size) and gets side bars. */
+    if (getenv("IOSRT_FILL") && rt_scr_w > 0 && rt_scr_h > 0) {
+        if (bw > bh && rt_scr_w / rt_scr_h > bw / bh) bw = floor(bh * rt_scr_w / rt_scr_h);
+        else if (bh >= bw && rt_scr_h / rt_scr_w > bh / bw) bh = floor(bw * rt_scr_h / rt_scr_w);
+    }
     rt_log("compatibility screen %gx%g pt (no launch storyboard), scaled to the display", bw, bh);
     rt_scr_w = (float)bw; rt_scr_h = (float)bh; rt_scr_scale = 2;
+}
+/* For the Android shell, before launch: 1 if the bundle at path runs only in landscape. */
+RT_EXPORT int iosrt_app_landscape(const char *path) {
+    void iosrt_init(void); iosrt_init();
+    char dir[4096]; snprintf(dir, sizeof dir, "%s", path);
+    struct stat st;
+    if (stat(dir, &st) == 0 && !S_ISDIR(st.st_mode)) { char *sl = strrchr(dir, '/'); if (sl) *sl = 0; }
+    char plist[4200]; snprintf(plist, sizeof plist, "%s/Info.plist", dir);
+    FILE *f = fopen(plist, "rb"); if (!f) return 0;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    uint8_t *b = malloc(n > 0 ? (size_t)n : 1); size_t got = fread(b, 1, n > 0 ? (size_t)n : 0, f); fclose(f);
+    id rt_plist_parse(const uint8_t *, size_t);
+    void *pool = objc_autoreleasePoolPush();
+    id info = rt_plist_parse(b, got); free(b);
+    int land = 0;
+    if (info) {
+        id list = rt_dict_get(info, rt_str("UISupportedInterfaceOrientations~iphone"));
+        if (!list) list = rt_dict_get(info, rt_str("UISupportedInterfaceOrientations"));
+        int l = 0, p = 0;
+        for (size_t i = 0; list && i < rt_array_count(list); i++) { const char *o = rt_str_utf8(rt_array_at(list, i)); if (strstr(o, "Landscape")) l = 1; else if (strstr(o, "Portrait")) p = 1; }
+        if (!list) { id one = rt_dict_get(info, rt_str("UIInterfaceOrientation")); if (one && strstr(rt_str_utf8(one), "Landscape")) l = 1; }
+        land = l && !p;
+    }
+    objc_autoreleasePoolPop(pool);
+    return land;
 }
 id g_main_nib_objects;   /* the main nib's top-level objects, kept for the app's lifetime */
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
@@ -1322,6 +1543,16 @@ int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName
     for (unsigned frame = 1; !rt_quit_requested; frame++) {
         pool = objc_autoreleasePoolPush();
         run_script(frame);
+        /* a scripted wait: main-queue work, timers and layout go on, the frame count does not */
+        while (script_wait_until > rt_now() && !rt_quit_requested) {
+            void *wp = objc_autoreleasePoolPush();
+            rt_display_links_tick();
+            rt_runloop_run_once(0);
+            struct uiapp *wa = (struct uiapp *)app;
+            for (size_t i = 0; i < rt_array_count(wa->windows); i++) layout_tree(rt_array_at(wa->windows, i));
+            objc_autoreleasePoolPop(wp);
+            usleep(2000);
+        }
         for (;;) {
             pthread_mutex_lock(&input_lock);
             int has = tq_head != tq_tail; struct touch_ev e = touchq[tq_head];
@@ -1546,7 +1777,7 @@ void rt_uikit_init(void) {
     CM(v, "setAnimationDelay:", va_setDelay); CM(v, "setAnimationDelegate:", va_setDelegate); CM(v, "setAnimationDidStopSelector:", va_setStop);
     CM(v, "setAnimationCurve:", va_noopL); CM(v, "setAnimationBeginsFromCurrentState:", va_noopL); CM(v, "setAnimationRepeatCount:", va_noopL);
     CM(v, "setAnimationRepeatAutoreverses:", va_noopL); CM(v, "setAnimationTransition:forView:cache:", va_noop2);
-    CM(v, "setAnimationWillStartSelector:", va_noopL);
+    CM(v, "setAnimationWillStartSelector:", va_setStart);
 
     NEWCLASS(UIWindow, v, sizeof(struct uiwindow) - sizeof(struct uiview));
     Class w = RT_CLASS(UIWindow);

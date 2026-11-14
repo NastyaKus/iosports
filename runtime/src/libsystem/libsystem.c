@@ -130,7 +130,8 @@ void iosrt_perror(const char *s) {
     char b[512]; snprintf(b, sizeof b, "%s%s%s\n", s ? s : "", s ? ": " : "", strerror(errno));
     rt_out(2, b, strlen(b));
 }
-FILE *iosrt_fopen(const char *path, const char *mode) { FILE *f = fopen(path, mode); if (!f) sync_errno(); return f; }
+void rt_trace_file(const char *op, const char *path, int ok);
+FILE *iosrt_fopen(const char *path, const char *mode) { FILE *f = fopen(path, mode); rt_trace_file("fopen", path, f != NULL); if (!f) sync_errno(); return f; }
 
 /* ----------------------------------------------------- open/fcntl flags */
 static int map_oflags(int d) {
@@ -146,8 +147,16 @@ static int map_oflags(int d) {
     if (d & 0x80) f |= O_SYNC;
     return f;
 }
+/* debugging aid: IOSRT_TRACE_FILES=substring logs file lookups whose path contains it ("*" = all) */
+void rt_trace_file(const char *op, const char *path, int ok) {
+    static const char *flt; static int init;
+    if (!init) { flt = getenv("IOSRT_TRACE_FILES"); init = 1; }
+    if (!flt || !path || (strcmp(flt, "*") && !strstr(path, flt))) return;
+    rt_warn("file %s %s %s", op, ok ? "ok  " : "FAIL", path);
+}
 int iosrt_darwin_open(const char *path, int flags, const uint64_t *args) {
     int r = open(path, map_oflags(flags), (flags & 0x200) ? (mode_t)args[0] : 0);
+    rt_trace_file("open", path, r >= 0);
     if (r < 0) sync_errno(); return r;
 }
 int iosrt_darwin_openat(int dfd, const char *path, int flags, const uint64_t *args) {
@@ -190,18 +199,18 @@ static void conv_stat(const struct stat *s, struct darwin_stat *d) {
     d->st_birthtimespec = d->st_ctimespec;
     d->st_size = s->st_size; d->st_blocks = s->st_blocks; d->st_blksize = (int32_t)s->st_blksize;
 }
-int iosrt_stat(const char *p, struct darwin_stat *d) { struct stat s; int r = stat(p, &s); if (r) { sync_errno(); return r; } conv_stat(&s, d); return 0; }
-int iosrt_lstat(const char *p, struct darwin_stat *d) { struct stat s; int r = lstat(p, &s); if (r) { sync_errno(); return r; } conv_stat(&s, d); return 0; }
+int iosrt_stat(const char *p, struct darwin_stat *d) { struct stat s; int r = stat(p, &s); rt_trace_file("stat", p, !r); if (r) { sync_errno(); return r; } conv_stat(&s, d); return 0; }
+int iosrt_lstat(const char *p, struct darwin_stat *d) { struct stat s; int r = lstat(p, &s); rt_trace_file("lstat", p, !r); if (r) { sync_errno(); return r; } conv_stat(&s, d); return 0; }
 int iosrt_fstat(int fd, struct darwin_stat *d) { struct stat s; int r = fstat(fd, &s); if (r) { sync_errno(); return r; } conv_stat(&s, d); return 0; }
 int iosrt_mkdir(const char *p, mode_t m) { int r = mkdir(p, m); if (r) sync_errno(); return r; }
 int iosrt_unlink(const char *p) { int r = unlink(p); if (r) sync_errno(); return r; }
-int iosrt_access(const char *p, int m) { int r = access(p, m); if (r) sync_errno(); return r; }
+int iosrt_access(const char *p, int m) { int r = access(p, m); rt_trace_file("access", p, !r); if (r) sync_errno(); return r; }
 
 /* ---------------------------------------------------------- dirent */
 struct darwin_dirent { uint64_t d_ino, d_seekoff; uint16_t d_reclen, d_namlen; uint8_t d_type; char d_name[1024]; };
 struct rt_dir { DIR *d; struct darwin_dirent ent; };
 void *iosrt_opendir(const char *p) {
-    DIR *d = opendir(p); if (!d) { sync_errno(); return NULL; }
+    DIR *d = opendir(p); rt_trace_file("opendir", p, d != NULL); if (!d) { sync_errno(); return NULL; }
     struct rt_dir *r = rt_xcalloc(1, sizeof *r); r->d = d; return r;
 }
 struct darwin_dirent *iosrt_readdir(struct rt_dir *r) {

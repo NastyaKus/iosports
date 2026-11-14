@@ -524,3 +524,20 @@ extern NSString *const NSDefaultRunLoopMode;
 @property (readonly) NSError *parserError;
 @property (readonly) NSInteger lineNumber;
 @end
+
+@interface NSValue : NSObject <NSCopying>
++ (NSValue *)valueWithBytes:(const void *)value objCType:(const char *)type;
++ (NSValue *)valueWithPointer:(const void *)p;
++ (NSValue *)valueWithRange:(NSRange)r;
+@property (readonly) const char *objCType;
+@property (readonly) NSRange rangeValue;
+@property (readonly) void *pointerValue;
+- (void)getValue:(void *)value;
+@end
+@interface NSObject (NSKeyValueCoding)
+- (id)valueForKey:(NSString *)key;
+- (void)setValue:(id)value forKey:(NSString *)key;
+- (id)valueForKeyPath:(NSString *)path;
+- (void)setValue:(id)value forKeyPath:(NSString *)path;
+- (void)setValuesForKeysWithDictionary:(NSDictionary *)d;
+@end

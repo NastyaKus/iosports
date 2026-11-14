@@ -29,7 +29,7 @@ CoreText, AudioToolbox и другие фреймворки реализован
 
 ```sh
 runtime/build.sh linux|android|all          # build/iosrt-run-{linux-aarch64,android-arm64}
-tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 74/74
+tests/run_tests.sh                          # всё под qemu, обе сборки; сейчас 78/78
 tools/build_apk_manual.sh <out.apk>         # APK без gradle (NDK + d8 + aapt2)
 sdk/build-app.sh <out> 12.0 main.m -framework UIKit ...   # сборка своего сэмпла
 # реальное приложение в трассе (только android-сборка: в ней есть C++):
@@ -40,8 +40,10 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 Полезные env: `IOSRT_STRICT=0` (lenient, по умолчанию на Android),
 `IOSRT_VERBOSE=1` (бэктрейсы у soft error), `IOSRT_DUMP_CLASS=A,B` (методы классов),
 `IOSRT_HEADLESS_FRAMES`, `IOSRT_SCRIPT`, `IOSRT_PNG_OUT`, `IOSRT_LOG_PLAIN=1`,
-`IOSRT_DUMP_VIEWS=1` (дерево view с text/alpha), `IOSRT_TRACE_MSG=sel,...` (только промахи кэша
-методов), `IOSRT_TRACE_KVC=1`, `IOSRT_TRACE_EH=1`. NIBArchive: тип 4 = NO, 5 = YES.
+`IOSRT_DUMP_VIEWS=1` (дерево view: text/alpha/bg/адрес), `IOSRT_TRACE_MSG=sel,...`,
+`IOSRT_TRACE_CLASS=Cls,...` (все сообщения классу), `IOSRT_TRACE_MSG_DUMP=N`, `IOSRT_TRACE_FILES=подстрока`,
+`IOSRT_TRACE_KVC=1`, `IOSRT_TRACE_EH=1`, `TRACE_ARGS="--screen 873x393"` для trace_app.sh.
+NIBArchive: тип 4 = NO, 5 = YES. Скриптовый `wait:ms` крутит run loop; `pdown/pmove/pup:id,x,y` — доп. пальцы.
 `ipsw` для анализа собран в `scratchpad/ipsw/ipsw` (`class-dump --arch arm64`).
 
 ## Куда смотреть в коде
@@ -53,7 +55,10 @@ RUNTIME=build/iosrt-run-android-arm64 IOSRT_PNG_OUT=x.png TRACE_OUT=dir TRACE_TI
 | Разрешение символов, fallback через dlsym | `loader/symbols.c` `rt_resolve_symbol` → `rt_platform_dlsym_fallback` (`platform/android.c`, слабый дефолт в `util.c`) |
 | Классы и методы в C | `NEWCLASS`, `IM`, `CM` (`uikit/uikit_internal.h`), `RT_SEND0..3`, `RT_CLASS`, `RT_DEFINE_CLASS` (`internal.h`) |
 | Платформа (вывод, кадр, звук) | `struct rt_platform` в `internal.h`, Android — `platform/android.c` |
-| Тачи, скрипт ввода, headless | `uikit/uikit.c`: `deliver_touch` (slop 2 pt), `run_script`, `render_frame` |
+| Тачи (мультитач: слоты `tslots`, жесты с несколькими пальцами), скрипт ввода, headless | `uikit/uikit.c`: `deliver_touch` (slop 2 pt), `run_script`, `render_frame`; Android: `IosView` (pointer id) → `nativeTouch` |
+| Полный экран в оболочке | `RunActivity` (ориентация из `nativeIsLandscape`, immersive, лог по громкости вверх), `IOSRT_FILL` в `choose_compat_screen` |
+| KVC (структуры в NSValue, типы нативных свойств) | `foundation/more.c` (`native_props`, `kvc_call_setter/getter`) |
+| NSDirectoryEnumerator, ресурсы NSURL | `foundation/fileenum.c` |
 | View controllers, навигация, таблицы | `uikit/controls2.c` (`nav_*`, `vc_*`, `rt_vc_appear`, `rt_vc_load_view`) |
 | NIB / keyed archives / storyboard | `uikit/nib.c`, `foundation/archiver.c`, `uikit/storyboard.c` |
 | Слои и композитинг | `uikit/layer.c` (`rt_layer_render`, `draw_contents`) |
@@ -117,8 +122,8 @@ IPA (расшифрованный) — `scratchpad/apps/garageband/x/Payload/Mob
 `docs/GARAGEBAND-REQUIREMENTS.md`. ✅ dylib, ✅ libc++, ✅ исключения, ✅ vDSP: в трассе стартует и
 показывает браузер инструментов. ✅ Assets.car, ✅ Auto Layout, ✅ экраны первого запуска
 (тапы Continue (333,355) → Use GarageBand (333,355), экран 667×375), карусель листается.
-Тап по карточке (190,160) создаёт и сохраняет песню, строит экран Keyboard; модель песни
-грузится в фоне (под qemu минуты, спиннер MAUIProgressViewController). Для длинных трасс:
+Тап по карточке (190,160) создаёт песню и открывает Keyboard (Grand Piano); клавиши звучат
+(`IOSRT_AUDIO_WAV=x.wav`, нажатие `down:60,300` после `250:wait:90000`). Для длинных трасс:
 `IOSRT_RENDER_EVERY=50`, `wait:300000` в скрипте, `IOSRT_WATCHDOG=N`. Разбор: `ivars.py --index addr`
 (метод по адресу), `selxref.py gb64 sel` (кто шлёт селектор). Новые API — `foundation/more6.c`. Трасса GarageBand под qemu ~1 мин;
 `IOSRT_DUMP_VIEWS=1` — дерево view в конце. Разбор бинаря: `scratchpad/tools/{dis,ivars,xref}.py`.

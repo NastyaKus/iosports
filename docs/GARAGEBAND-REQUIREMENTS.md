@@ -60,8 +60,20 @@ Taps go through Welcome → Get Started → the instrument browser; the carousel
 18. Nil-tolerant `bringSubviewToFront:` and friends; `maskView`, snapshots, trait collections.
 
 With these, the app creates and saves `My Song.band` (project data, metadata), builds the
-song screen and the Keyboard instrument's controller, and loads the song model in the
-background (slowly under qemu; the progress overlay was still up after several minutes).
+song screen and the Keyboard instrument's controller.
+
+## Playing the Keyboard
+
+19. `-[NSString compare:options:range:locale:]` (missing, it answered "equal" and broke the
+    sorted instrument index: "EXS instrument not found"), NSFileAttributes accessors.
+20. A recursive `NSDirectoryEnumerator` with attributes, NSURL resource values from stat(2).
+21. UIView legacy animations call the delegate's `animationDidStop:finished:context:` by default
+    (the song-opening transition waits for it before the loading overlay goes away).
+22. `insertSubview:belowSubview:` with a sibling in another view puts the view on top.
+23. KVC with struct values (the instrument skins set frames, centers and transforms by key).
+
+Then the Keyboard screen appears (Grand Piano, Sustain, keys C3–C4) and touches on the keys
+play the sampled piano through RemoteIO (one finger and two-finger chords in a trace).
 
 ## Still missing on the first screen
 

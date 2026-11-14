@@ -20,7 +20,7 @@
         <!-- every guest app runs in its own process: the runtime has process-global state
              and a crashing guest must not take the shell down -->
         <activity android:name=".RunActivity" android:process=":guest"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="portrait" />
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
     </application>
 </manifest>

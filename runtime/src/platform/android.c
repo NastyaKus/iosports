@@ -167,7 +167,25 @@ JNIEXPORT jint JNICALL Java_org_iosrt_NativeBridge_nativeRun(JNIEnv *env, jclass
     return iosrt_run(p, &o);
 }
 
-JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeTouch(JNIEnv *env, jclass cls, jint phase, jfloat x, jfloat y) {
-    (void)env; (void)cls; void rt_push_touch_px(int, int, float, float); rt_push_touch_px(0, phase, x, y);
+JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeTouch(JNIEnv *env, jclass cls, jint id, jint phase, jfloat x, jfloat y) {
+    (void)env; (void)cls; void rt_push_touch_px(int, int, float, float); rt_push_touch_px(id, phase, x, y);
+}
+JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeSetEnv(JNIEnv *env, jclass cls, jstring jname, jstring jval) {
+    (void)cls;
+    const char *n = (*env)->GetStringUTFChars(env, jname, NULL);
+    if (jval) { const char *v = (*env)->GetStringUTFChars(env, jval, NULL); setenv(n, v, 1); (*env)->ReleaseStringUTFChars(env, jval, v); }
+    else unsetenv(n);
+    (*env)->ReleaseStringUTFChars(env, jname, n);
+}
+int iosrt_app_landscape(const char *path);
+JNIEXPORT jboolean JNICALL Java_org_iosrt_NativeBridge_nativeIsLandscape(JNIEnv *env, jclass cls, jstring jpath) {
+    (void)cls;
+    const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
+    struct rt_platform *saved = rt_plat;
+    rt_platform_set_host();
+    int r = iosrt_app_landscape(path);
+    rt_plat = saved;
+    (*env)->ReleaseStringUTFChars(env, jpath, path);
+    return r ? JNI_TRUE : JNI_FALSE;
 }
 JNIEXPORT void JNICALL Java_org_iosrt_NativeBridge_nativeQuit(JNIEnv *env, jclass cls) { (void)env; (void)cls; iosrt_request_quit(); }

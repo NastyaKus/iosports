@@ -556,18 +556,43 @@ static void trace_init(void) {
     char buf[1024]; snprintf(buf, sizeof buf, "%s", e);
     for (char *sv = NULL, *t = strtok_r(buf, ",", &sv); t && g_ntrace < 32; t = strtok_r(NULL, ",", &sv)) g_trace_sels[g_ntrace++] = rt_sel(t);
 }
+/* IOSRT_TRACE_CLASS=A,B: every message whose receiver's class (or metaclass) is named A or B */
+static char g_trace_classes[512]; static int g_trace_cls_init;
+static int trace_class_match(const char *name) {
+    if (!g_trace_cls_init) { const char *e = getenv("IOSRT_TRACE_CLASS"); if (e) snprintf(g_trace_classes, sizeof g_trace_classes, ",%s,", e); g_trace_cls_init = 1; }
+    if (!g_trace_classes[0] || !name) return 0;
+    char k[256]; snprintf(k, sizeof k, ",%s,", name);
+    return strstr(g_trace_classes, k) != NULL;
+}
 static void trace_send(Class cls, id self, SEL sel, id *slot) {
     if (g_ntrace < 0) trace_init();
+    if (trace_class_match(rt_cls(cls)->name)) {
+        struct rt_class *rc = rt_cls(cls);
+        rt_warn("cls %c[%s %s] %p args %p %p", (rc->flags & RT_CLS_META) ? '+' : '-', rc->name, sel, (void *)self,
+                slot ? (void *)slot[2] : NULL, slot ? (void *)slot[3] : NULL);
+    }
     for (int i = 0; i < g_ntrace; i++) if (g_trace_sels[i] == sel) {
         struct rt_class *rc = rt_cls(cls);
         /* slot: the receiver saved by objc_msgSend; x2, x3 follow it */
         rt_warn("msg %c[%s %s] %p args %p %p", (rc->flags & RT_CLS_META) ? '+' : '-', rc->name, sel, (void *)self,
                 slot ? (void *)slot[2] : NULL, slot ? (void *)slot[3] : NULL);
+        /* string receivers are shown too (comparisons, prefixes) */
+        { int rt_is_string(id); const char *rt_str_utf8(id);
+          if (self && !(rc->flags & RT_CLS_META) && rt_is_string(self)) { const char *u = rt_str_utf8(self); rt_warn("    self = \"%.120s\"", u ? u : ""); } }
+        /* IOSRT_TRACE_MSG_DUMP=N: also show N bytes the first argument points to */
+        const char *dn = getenv("IOSRT_TRACE_MSG_DUMP");
+        if (dn && slot && slot[2] && ((uintptr_t)slot[2] >> 12)) {
+            int n = atoi(dn); if (n > 256) n = 256;
+            const uint8_t *b = (const uint8_t *)slot[2];
+            char line[1024]; int o = 0;
+            for (int k = 0; k < n && o < (int)sizeof line - 4; k++) o += snprintf(line + o, sizeof line - (size_t)o, "%02x%s", b[k], (k & 7) == 7 ? " " : "");
+            rt_warn("    *x2: %s", line);
+        }
         return;
     }
 }
 static IMP lookup_send(Class cls, id self, SEL sel, id *self_slot) {
-    if (g_ntrace) trace_send(cls, self, sel, self_slot);
+    if (g_ntrace || g_trace_classes[0] || !g_trace_cls_init) trace_send(cls, self, sel, self_slot);
     struct rt_class *rc = rt_cls(cls);
     if (is_unrealized(cls)) { rt_register_class(cls); rc = rt_cls(cls); }
     if (!(rc->flags & RT_CLS_INITIALIZED)) {

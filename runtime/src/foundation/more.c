@@ -345,6 +345,94 @@ static struct rt_ivar *find_ivar(Class c, const char *name) {
     for (; c; c = c->superclass) { struct rt_class *rc = rt_cls(c); for (size_t i = 0; i < rc->nivars; i++) if (!strcmp(rc->ivars[i].name, name)) return &rc->ivars[i]; }
     return NULL;
 }
+/* ---- struct values through KVC (NSValue boxes CGRect, CGPoint, transforms, ranges) */
+static id val_make(const void *b, size_t n, const char *type);
+enum { KS_NONE, KS_D2, KS_D4, KS_D6, KS_D16, KS_U2 };
+static int kvc_shape(const char *enc) {
+    if (!enc) return KS_NONE;
+    enc = skip_qual(enc);
+    if (*enc != '{') return KS_NONE;
+    if (!strncmp(enc, "{CGRect", 7) || !strncmp(enc, "{UIEdgeInsets", 13) || !strncmp(enc, "{NSDirectionalEdgeInsets", 24)) return KS_D4;
+    if (!strncmp(enc, "{CGPoint", 8) || !strncmp(enc, "{CGSize", 7) || !strncmp(enc, "{UIOffset", 9) || !strncmp(enc, "{CGVector", 9)) return KS_D2;
+    if (!strncmp(enc, "{CGAffineTransform", 18)) return KS_D6;
+    if (!strncmp(enc, "{CATransform3D", 14)) return KS_D16;
+    if (!strncmp(enc, "{_NSRange", 9) || !strncmp(enc, "{NSRange", 8)) return KS_U2;
+    return KS_NONE;
+}
+static size_t kvc_shape_size(int k) { return k == KS_D2 || k == KS_U2 ? 16 : k == KS_D4 ? 32 : k == KS_D6 ? 48 : k == KS_D16 ? 128 : 0; }
+/* the runtime's own methods carry no type encodings: the types of the UIKit/QuartzCore properties KVC meets */
+#define E_RECT "{CGRect={CGPoint=dd}{CGSize=dd}}"
+#define E_PT "{CGPoint=dd}"
+#define E_SZ "{CGSize=dd}"
+#define E_INS "{UIEdgeInsets=dddd}"
+#define E_AFF "{CGAffineTransform=dddddd}"
+#define E_T3D "{CATransform3D=dddddddddddddddd}"
+static const struct { const char *key, *enc; int layer; } native_props[] = {
+    { "frame", E_RECT, -1 }, { "bounds", E_RECT, -1 }, { "contentsRect", E_RECT, 1 }, { "contentsCenter", E_RECT, 1 },
+    { "center", E_PT, 0 }, { "position", E_PT, 1 }, { "anchorPoint", E_PT, 1 }, { "contentOffset", E_PT, -1 },
+    { "contentSize", E_SZ, -1 }, { "shadowOffset", E_SZ, -1 },
+    { "contentInset", E_INS, -1 }, { "scrollIndicatorInsets", E_INS, -1 }, { "layoutMargins", E_INS, -1 }, { "separatorInset", E_INS, -1 },
+    { "titleEdgeInsets", E_INS, -1 }, { "imageEdgeInsets", E_INS, -1 }, { "contentEdgeInsets", E_INS, -1 },
+    { "transform", E_AFF, 0 }, { "transform", E_T3D, 1 }, { "sublayerTransform", E_T3D, 1 }, { "affineTransform", E_AFF, 1 },
+    { "opacity", "f", 1 }, { "shadowOpacity", "f", 1 }, { "value", "f", 0 }, { "progress", "f", 0 }, { "minimumValue", "f", 0 }, { "maximumValue", "f", 0 },
+    { "alpha", "d", -1 }, { "cornerRadius", "d", -1 }, { "borderWidth", "d", -1 }, { "zPosition", "d", -1 }, { "shadowRadius", "d", -1 },
+    { "lineWidth", "d", -1 }, { "contentScaleFactor", "d", -1 }, { "contentsScale", "d", -1 }, { "rowHeight", "d", -1 },
+    { "zoomScale", "d", -1 }, { "minimumZoomScale", "d", -1 }, { "maximumZoomScale", "d", -1 }, { "strokeStart", "d", -1 }, { "strokeEnd", "d", -1 },
+    { "hidden", "B", -1 }, { "opaque", "B", -1 }, { "clipsToBounds", "B", -1 }, { "masksToBounds", "B", -1 }, { "userInteractionEnabled", "B", -1 },
+    { "enabled", "B", -1 }, { "selected", "B", -1 }, { "highlighted", "B", -1 }, { "on", "B", -1 }, { "scrollEnabled", "B", -1 },
+    { "pagingEnabled", "B", -1 }, { "bounces", "B", -1 }, { "exclusiveTouch", "B", -1 }, { "multipleTouchEnabled", "B", -1 },
+    { "adjustsFontSizeToFitWidth", "B", -1 }, { "doubleSided", "B", -1 }, { "geometryFlipped", "B", -1 }, { "showsTouchWhenHighlighted", "B", -1 },
+    { "tag", "q", -1 }, { "numberOfLines", "q", -1 }, { "textAlignment", "q", -1 }, { "contentMode", "q", -1 }, { "lineBreakMode", "q", -1 },
+    { "autoresizingMask", "Q", -1 }, { "currentPage", "q", -1 }, { "numberOfPages", "q", -1 }, { "selectedSegmentIndex", "q", -1 },
+    { "contentHorizontalAlignment", "q", -1 }, { "contentVerticalAlignment", "q", -1 },
+};
+static const char *native_prop_type(id self, const char *key) {
+    Class layer = (Class)rt_class_named("CALayer");
+    int is_layer = layer && rt_is_kind_of(self, layer);
+    for (size_t i = 0; i < sizeof native_props / sizeof *native_props; i++)
+        if (!strcmp(native_props[i].key, key) && (native_props[i].layer < 0 || native_props[i].layer == is_layer)) return native_props[i].enc;
+    return NULL;
+}
+/* bytes of a struct-shaped value (an NSValue of that shape; anything else reads as zeros) */
+static void kvc_struct_bytes(id v, int shape, uint8_t *buf) {
+    memset(buf, 0, 128);
+    if (!v || !rt_responds(v, rt_sel("objCType")) || rt_is_kind_of(v, RT_CLASS(NSNumber))) return;
+    const char *t = RT_SEND0(const char *, v, "objCType");
+    if (kvc_shape(t) != shape) return;
+    RT_SEND1(void, v, "getValue:", void *, buf);
+}
+struct d6 { double v[6]; }; struct d16 { double v[16]; };
+static void kvc_call_setter(id self, struct rt_method *m, const char *enc, id value) {
+    int shape = kvc_shape(enc);
+    if (shape != KS_NONE) {
+        uint8_t b[128]; kvc_struct_bytes(value, shape, b); double *d = (double *)b; uint64_t *u = (uint64_t *)b;
+        switch (shape) {
+        case KS_D2: ((void (*)(id, SEL, double, double))m->imp)(self, m->name, d[0], d[1]); break;
+        case KS_D4: ((void (*)(id, SEL, double, double, double, double))m->imp)(self, m->name, d[0], d[1], d[2], d[3]); break;
+        case KS_D6: { struct d6 x; memcpy(&x, b, sizeof x); ((void (*)(id, SEL, struct d6))m->imp)(self, m->name, x); break; }
+        case KS_D16: { struct d16 x; memcpy(&x, b, sizeof x); ((void (*)(id, SEL, struct d16))m->imp)(self, m->name, x); break; }
+        case KS_U2: ((void (*)(id, SEL, uint64_t, uint64_t))m->imp)(self, m->name, u[0], u[1]); break;
+        }
+        return;
+    }
+    struct tinfo ai; parse_type(enc, &ai);
+    if (ai.kind == TK_DOUBLE) ((void (*)(id, SEL, double))m->imp)(self, m->name, value ? RT_SEND0(double, value, "doubleValue") : 0);
+    else if (ai.kind == TK_FLOAT) ((void (*)(id, SEL, float))m->imp)(self, m->name, value ? (float)RT_SEND0(double, value, "doubleValue") : 0);
+    else ((void (*)(id, SEL, long long))m->imp)(self, m->name, value ? RT_SEND0(long long, value, "longLongValue") : 0);
+}
+static id kvc_call_getter(id self, struct rt_method *m, const char *enc) {
+    int shape = kvc_shape(enc);
+    uint8_t b[128] = { 0 };
+    switch (shape) {
+    case KS_D2: { CGPoint r = ((CGPoint (*)(id, SEL))m->imp)(self, m->name); memcpy(b, &r, 16); break; }
+    case KS_D4: { CGRect r = ((CGRect (*)(id, SEL))m->imp)(self, m->name); memcpy(b, &r, 32); break; }
+    case KS_D6: { struct d6 r = ((struct d6 (*)(id, SEL))m->imp)(self, m->name); memcpy(b, &r, sizeof r); break; }
+    case KS_D16: { struct d16 r = ((struct d16 (*)(id, SEL))m->imp)(self, m->name); memcpy(b, &r, sizeof r); break; }
+    case KS_U2: { NSRange r = ((NSRange (*)(id, SEL))m->imp)(self, m->name); memcpy(b, &r, 16); break; }
+    default: return NULL;
+    }
+    return val_make(b, kvc_shape_size(shape), skip_qual(enc));
+}
 static id box_scalar(const char *type, const void *p) {
     switch (type ? *skip_qual(type) : '@') {
     case 'c': case 'B': return RT_SEND1(id, (id)RT_CLASS(NSNumber), "numberWithBool:", long, *(const signed char *)p);
@@ -384,9 +472,12 @@ static id o_valueForKey(id self, SEL s, id key) {
         struct rt_method *m = rt_find_method(self->isa, rt_sel(cands[i]));
         if (!m) continue;
         free(K);
-        const char *rt = m->types && *m->types ? m->types : "@";
+        const char *rt = m->types && *m->types ? m->types : NULL;
+        if (!rt) rt = native_prop_type(self, k);
+        if (!rt) rt = "@";
         struct tinfo ti; parse_type(rt, &ti);
         if (*skip_qual(rt) == '@' || *skip_qual(rt) == '#') return ((id (*)(id, SEL))m->imp)(self, m->name);
+        if (kvc_shape(rt) != KS_NONE) return kvc_call_getter(self, m, rt);
         uint8_t buf[32] = { 0 };
         if (ti.kind == TK_DOUBLE) { double d = ((double (*)(id, SEL))m->imp)(self, m->name); memcpy(buf, &d, 8); }
         else if (ti.kind == TK_FLOAT) { float d = ((float (*)(id, SEL))m->imp)(self, m->name); memcpy(buf, &d, 4); }
@@ -397,7 +488,12 @@ static id o_valueForKey(id self, SEL s, id key) {
     snprintf(i1, sizeof i1, "_%s", k); snprintf(i2, sizeof i2, "_is%s", K); ivn[0] = i1; ivn[1] = i2; ivn[3] = b1;
     for (int i = 0; i < 4; i++) {
         struct rt_ivar *iv = find_ivar(self->isa, ivn[i]);
-        if (iv) { free(K); return box_scalar(iv->type, (uint8_t *)self + iv->offset); }
+        if (iv) {
+            free(K);
+            int sh = kvc_shape(iv->type);
+            if (sh != KS_NONE) return val_make((uint8_t *)self + iv->offset, kvc_shape_size(sh), skip_qual(iv->type));
+            return box_scalar(iv->type, (uint8_t *)self + iv->offset);
+        }
     }
     free(K);
     snprintf(sel, sizeof sel, "[<%s %p> valueForUndefinedKey:]: this class is not key value coding-compliant for the key %s", rt_class_name(self->isa), (void *)self, k);
@@ -411,16 +507,24 @@ static void o_setValueForKey(id self, SEL s, id value, id key) {
     snprintf(setter, sizeof setter, "set%s:", K);
     struct rt_method *m = rt_find_method(self->isa, rt_sel(setter));
     if (m) {
-        const char *types = m->types && *m->types ? m->types : "v24@0:8@16";
-        /* argument 2 type: skip return, self, _cmd */
-        struct tinfo t; const char *p = parse_type(types, &t); p = parse_type(p, &t); p = parse_type(p, &t);
-        const char *at = skip_qual(p);
         free(K);
+        const char *at = NULL;
+        if (m->types && *m->types) {
+            /* argument 2 type: skip return, self, _cmd */
+            struct tinfo t; const char *p = parse_type(m->types, &t); p = parse_type(p, &t); p = parse_type(p, &t);
+            at = skip_qual(p);
+        } else at = native_prop_type(self, k);
+        if (!at) {
+            /* a runtime method of unknown type: hand the value over in every register it could be read from */
+            int shape = value && !rt_is_kind_of(value, RT_CLASS(NSNumber)) && rt_responds(value, rt_sel("objCType")) ? kvc_shape(RT_SEND0(const char *, value, "objCType")) : KS_NONE;
+            if (shape != KS_NONE) { kvc_call_setter(self, m, RT_SEND0(const char *, value, "objCType"), value); return; }
+            if (value && rt_is_kind_of(value, RT_CLASS(NSNumber)))
+                ((void (*)(id, SEL, long long, double))m->imp)(self, m->name, RT_SEND0(long long, value, "longLongValue"), RT_SEND0(double, value, "doubleValue"));
+            else ((void (*)(id, SEL, id))m->imp)(self, m->name, value);
+            return;
+        }
         if (*at == '@' || *at == '#' || !*at) { ((void (*)(id, SEL, id))m->imp)(self, m->name, value); return; }
-        struct tinfo ai; parse_type(at, &ai);
-        if (ai.kind == TK_DOUBLE) ((void (*)(id, SEL, double))m->imp)(self, m->name, value ? RT_SEND0(double, value, "doubleValue") : 0);
-        else if (ai.kind == TK_FLOAT) ((void (*)(id, SEL, float))m->imp)(self, m->name, value ? (float)RT_SEND0(double, value, "doubleValue") : 0);
-        else ((void (*)(id, SEL, long long))m->imp)(self, m->name, value ? RT_SEND0(long long, value, "longLongValue") : 0);
+        kvc_call_setter(self, m, at, value);
         return;
     }
     char i1[512], i2[512], i3[512];
@@ -432,6 +536,7 @@ static void o_setValueForKey(id self, SEL s, id value, id key) {
         if (!iv) continue;
         void *slot = (uint8_t *)self + iv->offset;
         if (!iv->type || *skip_qual(iv->type) == '@') { id old = *(id *)slot; *(id *)slot = objc_retain(value); objc_release(old); }
+        else if (kvc_shape(iv->type) != KS_NONE) { uint8_t b[128]; int sh = kvc_shape(iv->type); kvc_struct_bytes(value, sh, b); memcpy(slot, b, kvc_shape_size(sh)); }
         else unbox_scalar(iv->type, value, slot);
         return;
     }

@@ -61,6 +61,8 @@ app "$S/gl_demo" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framew
 app "$S/audioqueue_demo" 12.0 "$root/samples/audioqueue_demo/main.m" $F -framework AudioToolbox
 app "$S/xml_demo" 12.0 "$root/samples/xml_demo/main.m" $F
 app "$S/autolayout_demo" 12.0 "$root/samples/autolayout_demo/main.m" $F -framework UIKit -framework CoreGraphics
+app "$S/multitouch_demo" 12.0 "$root/samples/multitouch_demo/main.m" $F -framework UIKit -framework CoreGraphics
+app "$S/kvc_demo" 12.0 "$root/samples/kvc_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore
 rm -rf "$S/Land.app"; mkdir -p "$S/Land.app"
 app "$S/Land.app/Land" 12.0 "$root/samples/gl_demo/main.m" $F -framework UIKit -framework CoreGraphics -framework QuartzCore -framework OpenGLES -framework CoreMotion
 cat > "$S/Land.app/Info.plist" <<PL
@@ -209,6 +211,11 @@ print(im.getpixel((10, 10)), im.getpixel((10, h - 10)), im.getpixel((w - 10, h -
   fi
   $R "$S/autolayout_demo" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && diff -u "$root/tests/golden/autolayout_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "autolayout_demo (constraints, anchors, priorities, intrinsic size, frame-placed views)"; else ko "autolayout_demo rc=$rc" "$T/diff.txt"; fi
+  IOSRT_HEADLESS_FRAMES=14 IOSRT_SCRIPT="3:pdown:1,50,50;3:pdown:2,150,50;4:pmove:2,160,50;4:pup:1,50,50;4:pup:2,160,50;5:pdown:3,50,150;5:pdown:4,150,150;5:pmove:4,170,150;5:pup:4,170,150;5:pup:3,50,150;7:pdown:5,100,300;7:pdown:6,200,300;8:pmove:6,250,300;9:pmove:6,300,300;10:pup:6,300,300;10:pup:5,100,300" \
+    $R "$S/multitouch_demo" >"$T/raw.txt" 2>&1; rc=$?; grep -v '^screen \|^\[iosrt\]' "$T/raw.txt" >"$T/out.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/multitouch_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "multitouch_demo (several fingers per view, multipleTouchEnabled, pinch)"; else ko "multitouch_demo rc=$rc" "$T/diff.txt"; fi
+  IOSRT_HEADLESS_FRAMES=200 $R "$S/kvc_demo" >"$T/raw.txt" 2>&1; rc=$?; grep -v '^screen \|^\[iosrt\]' "$T/raw.txt" >"$T/out.txt"
+  if [ $rc = 0 ] && diff -u "$root/tests/golden/kvc_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "kvc_demo (KVC with struct values, legacy animation delegates, foreign siblings)"; else ko "kvc_demo rc=$rc" "$T/diff.txt"; fi
   # 4c. embedded framework + dylib through @rpath, plug-in bundle via NSBundle/dlopen, weak C++ coalescing
   $R "$S/DylibDemo.app" >"$T/out.txt" 2>&1; rc=$?
   if [ $rc = 0 ] && diff -u "$root/tests/golden/dylib_demo.txt" "$T/out.txt" >"$T/diff.txt"; then ok "dylib_demo (dyld-info: framework, @rpath dylib, bundle, dlopen/dlsym/dladdr)"; else ko "dylib_demo rc=$rc" "$T/diff.txt"; fi

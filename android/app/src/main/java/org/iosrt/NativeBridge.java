@@ -20,8 +20,12 @@ public final class NativeBridge {
     public static native String nativeReport(String path);
     /** Runs the guest until it exits; blocks the calling thread. */
     public static native int nativeRun(String path, String homeDir, float widthPt, float heightPt, float scale);
-    /** touch position in pixels of the last frame passed to onFrame */
-    public static native void nativeTouch(int phase, float xPx, float yPx);
+    /** one finger (Android pointer id), phase 0 down / 1 move / 2 up, in pixels of the last frame passed to onFrame */
+    public static native void nativeTouch(int pointerId, int phase, float xPx, float yPx);
+    /** true if the bundle's Info.plist allows only landscape orientations */
+    public static native boolean nativeIsLandscape(String path);
+    /** sets (or with null clears) an environment variable the runtime reads, e.g. IOSRT_FILL */
+    public static native void nativeSetEnv(String name, String value);
     public static native void nativeQuit();
 
     // called from native code (any thread)
