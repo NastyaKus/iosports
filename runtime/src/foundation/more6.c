@@ -7,6 +7,7 @@
 #include "../internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #define IM(c, s, f) rt_native_method(c, s, (void *)(f), "")
 #define CM(c, s, f) rt_native_cmethod(c, s, (void *)(f), "")
@@ -119,6 +120,19 @@ static void md_removeForKeys(id self, SEL s, id keys) {
     (void)s; for (size_t i = 0; keys && i < rt_array_count(keys); i++) RT_SEND1(void, self, "removeObjectForKey:", id, rt_array_at(keys, i));
 }
 
+static rt_bool is_isEqualToIndexSet(id self, SEL s, id o) {
+    (void)s; if (!o) return 0;
+    unsigned long n = RT_SEND0(unsigned long, self, "count");
+    if (n != RT_SEND0(unsigned long, o, "count")) return 0;
+    unsigned long i = RT_SEND0(unsigned long, self, "firstIndex");
+    for (unsigned long k = 0; k < n && i < (unsigned long)LONG_MAX; k++) {
+        if (!(RT_SEND1(long, o, "containsIndex:", unsigned long, i) & 0xff)) return 0;
+        unsigned long nx = RT_SEND1(unsigned long, self, "indexGreaterThanIndex:", unsigned long, i);
+        if (nx <= i) break;
+        i = nx;
+    }
+    return 1;
+}
 static id is_initWithIndexSet(id self, SEL s, id other) {
     (void)s; self = RT_SEND0(id, self, "init");
     if (self && other) RT_SEND1(void, self, "addIndexes:", id, other);
@@ -259,6 +273,7 @@ void rt_foundation_more6_init(void) {
 
     Class mis = rt_class_named("NSMutableIndexSet");
     IM(rt_class_named("NSIndexSet"), "initWithIndexSet:", is_initWithIndexSet);
+    IM(rt_class_named("NSIndexSet"), "isEqualToIndexSet:", is_isEqualToIndexSet);
     if (mis) IM(mis, "initWithIndexSet:", is_initWithIndexSet);
     /* NSIndexSet's own initialiser fills the receiver through the mutable methods */
     IM(rt_class_named("NSIndexSet"), "addIndexes:", (void *)rt_lookup_imp_named("NSMutableIndexSet", "addIndexes:"));

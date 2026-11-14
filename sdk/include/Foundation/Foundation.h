@@ -528,6 +528,7 @@ extern NSString *const NSDefaultRunLoopMode;
 @interface NSValue : NSObject <NSCopying>
 + (NSValue *)valueWithBytes:(const void *)value objCType:(const char *)type;
 + (NSValue *)valueWithPointer:(const void *)p;
++ (NSValue *)valueWithNonretainedObject:(id)o;
 + (NSValue *)valueWithRange:(NSRange)r;
 @property (readonly) const char *objCType;
 @property (readonly) NSRange rangeValue;

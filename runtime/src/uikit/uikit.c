@@ -1470,12 +1470,20 @@ RT_EXPORT int iosrt_app_landscape(const char *path) {
     objc_autoreleasePoolPop(pool);
     return land;
 }
+/* The screen an app sees is settled before any of its code runs: apps read UIScreen in static
+   initialisers and keep what they saw (GarageBand picks its iPhone layouts that way). */
+void rt_uikit_prepare_screen(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    choose_orientation();
+    choose_compat_screen();
+}
 id g_main_nib_objects;   /* the main nib's top-level objects, kept for the app's lifetime */
 int iosrt_UIApplicationMain(int argc, char **argv, id principal, id delegateName) {
     (void)argc; (void)argv;
     void *pool = objc_autoreleasePoolPush();
-    choose_orientation();
-    choose_compat_screen();
+    rt_uikit_prepare_screen();
     Class appc = principal ? rt_class_named(rt_str_utf8(principal)) : NULL;
     id app = app_shared(appc ? appc : RT_CLASS(UIApplication), NULL);
     Class dc = delegateName ? rt_class_named(rt_str_utf8(delegateName)) : find_delegate_class();
@@ -1793,6 +1801,7 @@ void rt_uikit_init(void) {
     IM(t, "locationInView:", t_locationInView); IM(t, "previousLocationInView:", t_prevLocationInView); IM(t, "view", t_view);
     IM(t, "window", t_window); IM(t, "phase", t_phase); IM(t, "tapCount", t_tapCount); IM(t, "timestamp", t_timestamp);
     IM(t, "gestureRecognizers", t_gestures); IM(t, "majorRadius", t_majorRadius); IM(t, "force", t_force); IM(t, "maximumPossibleForce", t_force);
+    IM(t, "_pressure", t_force); IM(t, "majorRadiusTolerance", t_force);
     IM(t, "type", t_type); IM(t, "dealloc", t_dealloc);
     NEWCLASS(UIEvent, o, sizeof(struct uievent) - sizeof(void *));
     Class ev = RT_CLASS(UIEvent);

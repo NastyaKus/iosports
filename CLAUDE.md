@@ -123,7 +123,8 @@ IPA (расшифрованный) — `scratchpad/apps/garageband/x/Payload/Mob
 показывает браузер инструментов. ✅ Assets.car, ✅ Auto Layout, ✅ экраны первого запуска
 (тапы Continue (333,355) → Use GarageBand (333,355), экран 667×375), карусель листается.
 Тап по карточке (190,160) создаёт песню и открывает Keyboard (Grand Piano); клавиши звучат
-(`IOSRT_AUDIO_WAV=x.wav`, нажатие `down:60,300` после `250:wait:90000`). Для длинных трасс:
+(`IOSRT_AUDIO_WAV=x.wav`, нажатие `down:60,300` после `250:wait:90000`). Экран телефона в
+трассе: `TRACE_ARGS="--screen 800x360"`; экран выбирается до инициализаторов (`rt_uikit_prepare_screen`). Для длинных трасс:
 `IOSRT_RENDER_EVERY=50`, `wait:300000` в скрипте, `IOSRT_WATCHDOG=N`. Разбор: `ivars.py --index addr`
 (метод по адресу), `selxref.py gb64 sel` (кто шлёт селектор). Новые API — `foundation/more6.c`. Трасса GarageBand под qemu ~1 мин;
 `IOSRT_DUMP_VIEWS=1` — дерево view в конце. Разбор бинаря: `scratchpad/tools/{dis,ivars,xref}.py`.

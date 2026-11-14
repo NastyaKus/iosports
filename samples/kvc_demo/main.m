@@ -52,6 +52,11 @@
     [root insertSubview:mine belowSubview:other];
     printf("inserted below a foreign sibling: index %lu of %lu\n", (unsigned long)[root.subviews indexOfObject:mine], (unsigned long)root.subviews.count);
 
+    // NSValue keys: equal values find each other in a dictionary (apps key per-touch state this way)
+    NSMutableDictionary *byTouch = [NSMutableDictionary dictionary];
+    byTouch[[NSValue valueWithNonretainedObject:v]] = @"note on";
+    printf("lookup by an equal NSValue: %s\n", [byTouch[[NSValue valueWithNonretainedObject:v]] UTF8String]);
+
     // legacy animation: only a delegate, the default selectors are called
     self.watcher = [Watcher new];
     [UIView beginAnimations:@"fade" context:NULL];

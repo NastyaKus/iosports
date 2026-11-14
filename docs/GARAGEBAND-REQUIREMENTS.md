@@ -72,6 +72,11 @@ song screen and the Keyboard instrument's controller.
 22. `insertSubview:belowSubview:` with a sibling in another view puts the view on top.
 23. KVC with struct values (the instrument skins set frames, centers and transforms by key).
 
+24. The screen size must be settled before static initialisers run: the app reads UIScreen
+    there and keeps it (with the raw display size it chose the 568-point keyboard layout).
+25. `-[NSValue hash]` consistent with `isEqual:` (key interactions are stored by
+    `valueWithNonretainedObject:` of the touch; without it keys stayed pressed).
+
 Then the Keyboard screen appears (Grand Piano, Sustain, keys C3–C4) and touches on the keys
 play the sampled piano through RemoteIO (one finger and two-finger chords in a trace).
 

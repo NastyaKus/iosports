@@ -282,6 +282,7 @@ static void *guest_thread(void *p) {
     g_apple[0] = g_apple_ep; g_apple[1] = NULL;
     if (sigsetjmp(guest_jmp, 0) == 0) {
         void *pool = objc_autoreleasePoolPush();
+        void rt_uikit_prepare_screen(void); rt_uikit_prepare_screen();
         initialize_images();
         objc_autoreleasePoolPop(pool);
         int (*main_fn)(int, char **, char **, char **) = (void *)(uintptr_t)(g->img->header_addr + g->img->entryoff);

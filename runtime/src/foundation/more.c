@@ -719,6 +719,12 @@ static void v_getValue(id self, SEL s, void *out) { (void)s; struct nsvalue *v =
 static const char *v_objCType(id self, SEL s) { (void)s; return ((struct nsvalue *)self)->type; }
 static rt_bool v_isEqual(id self, SEL s, id o) { (void)s; return o && o->isa == self->isa && !memcmp(((struct nsvalue *)self)->bytes, ((struct nsvalue *)o)->bytes, 128); }
 static id v_copy(id self, SEL s, void *z) { (void)s; (void)z; return objc_retain(self); }
+/* equal values hash alike (NSValue keys in dictionaries and sets: wrapped pointers, rects) */
+static unsigned long v_hash(id self, SEL s) {
+    (void)s; const uint8_t *b = ((struct nsvalue *)self)->bytes; uint64_t h = 1469598103934665603ULL;
+    for (int i = 0; i < 128; i++) { h ^= b[i]; h *= 1099511628211ULL; }
+    return (unsigned long)h;
+}
 
 /* ======================================================================= locks */
 struct nslock { Class isa; pthread_mutex_t m; pthread_cond_t c; id name; };
@@ -981,7 +987,7 @@ void rt_foundation_more_init(void) {
     CM(v, "valueWithBytes:objCType:", v_withBytes); CM(v, "value:withObjCType:", v_withBytes);
     IM(v, "CGRectValue", v_rect); IM(v, "CGPointValue", v_point); IM(v, "CGSizeValue", v_size); IM(v, "rangeValue", v_range);
     IM(v, "pointerValue", v_pointer); IM(v, "nonretainedObjectValue", v_pointer); IM(v, "getValue:", v_getValue);
-    IM(v, "objCType", v_objCType); IM(v, "isEqual:", v_isEqual); IM(v, "isEqualToValue:", v_isEqual); IM(v, "copyWithZone:", v_copy);
+    IM(v, "objCType", v_objCType); IM(v, "isEqual:", v_isEqual); IM(v, "hash", v_hash); IM(v, "isEqualToValue:", v_isEqual); IM(v, "copyWithZone:", v_copy);
 
     NEWCLASS(NSLock, o, sizeof(struct nslock) - sizeof(void *));
     NEWCLASS(NSRecursiveLock, o, sizeof(struct nslock) - sizeof(void *));
